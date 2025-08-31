@@ -50,36 +50,116 @@ app.use(express.json());
 // Demo UI (fix: render HTML when provided; escape only plain reply)
 app.get("/", (req, res) => {
   res.type("html").send(`
-    <!doctype html><html><head><meta charset="utf-8"/>
-      <title>Chatbot</title>
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8"/>
+      <meta name="viewport" content="width=device-width,initial-scale=1"/>
+      <title>OpenAI Chatbot</title>
       <style>
-        body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:2rem;max-width:900px;margin:auto}
-        #log{white-space:pre-wrap;background:#fafafa;border:1px solid #ddd;border-radius:6px;padding:10px;min-height:120px}
-        input{width:70%;padding:8px} button{padding:8px 12px;margin-left:8px} small{color:#666}
-        .msg{margin:6px 0}.me{font-weight:600}.bot{white-space:pre-wrap} a{color:#06c}
+        :root { --bg:#fafafa; --fg:#111; --muted:#666; --border:#ddd; --accent:#06c; }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        .page { min-height: 100vh; display: flex; flex-direction: column; }
+        header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: #fff; position: sticky; top: 0; z-index: 1; }
+        h1 { margin: 0; font-size: 20px; }
+        /* Scrollable chat log area */
+        .log { flex: 1 1 auto; overflow-y: auto; padding: 16px 20px; }
+        .msg { margin: 10px 0; line-height: 1.4; white-space: pre-wrap; }
+        .me  { font-weight: 600; margin-bottom: 6px; }
+        .bot { white-space: normal; }
+        .sources a { color: var(--accent); text-decoration: none; }
+        /* Composer pinned at bottom */
+        .composer-wrap { position: sticky; bottom: 0; background: #fff; border-top: 1px solid var(--border); }
+        .composer { display: flex; gap: 8px; padding: 12px 20px; max-width: 1000px; margin: 0 auto; }
+        .composer textarea {
+          flex: 1; padding: 10px 12px; resize: none; min-height: 44px; max-height: 160px;
+          border: 1px solid var(--border); border-radius: 8px; font: inherit; background: #fff;
+        }
+        .composer button {
+          padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background:#fff; cursor:pointer;
+        }
+        .hint { color: var(--muted); font-size: 12px; padding: 0 20px 12px; }
+        a { color: var(--accent); }
       </style>
-    </head><body>
-      <h1>OpenAI Chatbot</h1>
-      <div><input id="msg" placeholder="Ask 'What is the Century Club?', 'Wayland', or 'start quiz'"/><button onclick="send()">Send</button></div>
-      <div id="log"></div>
-      <small>Quiz proxied: POST <code>/api/chatbot/start</code> • <code>/api/chatbot/answer</code> • <code>/api/chatbot/finish</code> • <code>/api/chatbot/feedback</code></small>
+    </head>
+    <body>
+      <div class="page">
+        <header>
+          <h1>OpenAI Chatbot</h1>
+          <div class="hint">Try: <code>start quiz</code>, <code>pick 1</code>, or ask “What is the Century Club?”</div>
+        </header>
+
+        <div id="log" class="log"></div>
+
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea id="msg" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
+            <button id="sendBtn">Send</button>
+          </div>
+        </div>
+      </div>
+
       <script>
-        function add(w,t,isHtml){
-          const row=document.createElement('div');row.className='msg';
-          row.innerHTML = isHtml ? t : (w+': '+t);
-          document.getElementById('log').appendChild(row);
+        const log = document.getElementById('log');
+        const box = document.getElementById('msg');
+        const sendBtn = document.getElementById('sendBtn');
+
+        function appendHTML(html) {
+          const row = document.createElement('div');
+          row.className = 'msg';
+          row.innerHTML = html;
+          log.appendChild(row);
+          // Auto-scroll to bottom
+          log.scrollTop = log.scrollHeight;
         }
-        async function send(){
-          const box=document.getElementById('msg'); const m=box.value.trim(); if(!m) return; box.value='';
-          add('You','You: '+m,false);
-          const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:m}]})});
-          const d=await r.json().catch(()=>({html:'(no reply)'}));
-          // If server returns HTML, inject it; if only reply text, escape < >
-          if (d.html) add('Bot', d.html, true);
-          else add('Bot', (d.reply||'(no reply)').replace(/</g,'&lt;'), false);
+
+        function appendYou(text) {
+          const safe = text.replace(/</g, '&lt;');
+          appendHTML('<div class="me">You:</div><div>' + safe + '</div>');
         }
+
+        async function sendMessage() {
+          const m = box.value.trim();
+          if (!m) return;
+          box.value = '';
+          appendYou(m);
+
+          try {
+            const r = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ messages: [{ role: 'user', content: m }] })
+            });
+            const d = await r.json().catch(() => ({}));
+            if (d.html) {
+              appendHTML('<div class="bot">' + d.html + '</div>');
+            } else {
+              const t = (d.reply || '(no reply)').replace(/</g, '&lt;');
+              appendHTML('<div class="bot">' + t + '</div>');
+            }
+          } catch (e) {
+            appendHTML('<div class="bot">Error: ' + (e?.message || e) + '</div>');
+          }
+        }
+
+        // Click send
+        sendBtn.addEventListener('click', sendMessage);
+
+        // Enter to send, Shift+Enter = newline
+        box.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+          }
+        });
+
+        // Optional: focus textbox on load
+        window.addEventListener('load', () => box.focus());
       </script>
-    </body></html>`);
+    </body>
+    </html>
+  `);
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -216,7 +296,7 @@ app.post("/api/chat", async (req, res) => {
     }
 
     // QUIZ: start
-    if (/^(start|begin|let.?s\s*start).*quiz/i.test(lastUser)) {
+    if (/^(start|begin|go|let.?s\s*start)(?:\s+quiz)?$/i.test(lastUser)) {
       const r = await fetch(`${base}/api/chatbot/start`, { method:"POST", headers:{ "Content-Type":"application/json" }, body:"{}" });
       const data = await r.json().catch(()=>null);
       if (!data || !data.sessionId || !data.question) {
@@ -261,6 +341,16 @@ app.post("/api/chat", async (req, res) => {
     }
 
     // ---------------- Site-search–assisted RAG ----------------
+    // If a quiz is in progress, ignore RAG and remind the user to answer/pick
+    if (state.sessionId && state.question) {
+      const q = state.question;
+      const lines = (q.options || []).map((o,i)=> `<li>${i}. ${o.emoji || ""} ${o.text}</li>`).join("");
+      return res.json({ html:
+        `<strong>Question ${Object.keys(state.answers||{}).length + 1}:</strong> ${q.text}` +
+        `<ul>${lines}</ul><div>Reply like: "pick 1" or just "1".</div>`
+      });
+    }
+
     // 1) Two-pass: vector search + site search HTML
     const variants = [lastUser, lastUser.toLowerCase(), lastUser.replace(/[^\w\s]/g," ")]
       .filter((v,i,arr)=> normalizeText(v) && arr.indexOf(v) === i);
@@ -337,10 +427,24 @@ app.post("/api/chat", async (req, res) => {
       links.push(url);
     }
 
-    // 3) Summarize with Responses API
-    const systemContent = `You are a helpful golf site assistant. Using ONLY the Site Context, answer the user in 2–4 sentences, friendly and conversational.
-    If the context lacks a direct answer, synthesize a brief explanation from the snippets (do NOT guess beyond them).
-    Always include at least one citation like [n] where n is the block number that supports your key sentence.
+    // 3) Summarization prompt (evidence-bound; no hype; show pros/cons as present)
+    const systemContent = `You are a cautious, evidence-bound assistant for a golf course guide.
+
+    Rules:
+    - Use ONLY the Site Context below. Do NOT add filler, hype, or invented positives.
+    - If the context includes drawbacks, maintenance issues, closures, or negative sentiment, you MUST surface them plainly.
+    - If information is mixed, state both sides. If mostly negative, lead with issues.
+    - Always cite each claim with [n], where n is the block number from the context that supports the statement.
+    - If the context is insufficient, say: "I don’t have that in the site content."
+
+    Output format (HTML, no extra text outside this block):
+    <strong>Summary</strong><br/>
+    • <span>[n]</span> one sentence supported by a citation<br/>
+    • <span>[n]</span> another sentence with a citation<br/>
+    <strong>Pros</strong> (only if present):<br/>
+    • <span>[n]</span> …<br/>
+    <strong>Cons</strong> (only if present):<br/>
+    • <span>[n]</span> …<br/>
 
     # Site Context (cite with [n])
     ${context}`;
@@ -353,7 +457,9 @@ app.post("/api/chat", async (req, res) => {
           { role: "system", content: systemContent },
           ...messages.filter(m => m.role === "user")
         ],
-        temperature: 0.2
+        temperature: 0.1,    // low temp -> less “happy talk”
+        top_p: 1,
+        max_output_tokens: 450
       });
       reply = (completion?.output_text || "").trim();
     } catch (e) {
