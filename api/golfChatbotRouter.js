@@ -38,6 +38,8 @@ async function proxyJson(method, url, bodyObj) {
   }
 }
 
+// ----------------------- Routes -----------------------
+
 // Health (useful for Render/Vercel checks)
 router.get("/health", (_req, res) => {
   res.json({ ok: true, base: QUIZ_BASE_URL, timeout_ms: TIMEOUT_MS });
