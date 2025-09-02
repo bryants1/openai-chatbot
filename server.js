@@ -1,5 +1,6 @@
 // server.js — Chat + Quiz + RAG over site_docs
-// Features: Voyage re-rank, list-intent output, location-aware retrieval, pretty HTML, fixed sidecar (GET & POST)
+// Features: Voyage re-rank, list-intent output, location-aware retrieval,
+// pretty HTML, fixed sidecar (GET & POST), and working quiz handoff (HTML)
 
 import "dotenv/config";
 import express from "express";
@@ -30,7 +31,6 @@ const QDRANT_API_KEY   = process.env.QDRANT_API_KEY || "";
 const QDRANT_COLL      = process.env.QDRANT_COLLECTION || "site_docs";
 const SITE_BASE        = (process.env.SITE_BASE || "").replace(/\/+$/, "");
 const SITE_VECTOR_NAME = (process.env.SITE_VECTOR_NAME || "").trim();
-
 const VOYAGE_API_KEY      = (process.env.VOYAGE_API_KEY || "").trim();
 const VOYAGE_RERANK_MODEL = (process.env.VOYAGE_RERANK_MODEL || "rerank-2-lite").trim();
 
@@ -98,6 +98,58 @@ function renderReplyHTML(text = "") {
   flushPara();
   if (listOpen) html.push("</ul>");
   return html.join("");
+}
+
+// Quiz render helpers (HTML to match your chat UI)
+function renderQuestionHTML(q, num = 1) {
+  const lines = (q.options || [])
+    .map((o, i) => `<li>${i}. ${o.emoji || ""} ${o.text}</li>`)
+    .join("");
+  return `<strong>Question ${num}:</strong> ${q.text}<ul>${lines}</ul><div>Reply like: "pick 1" or just "1".</div>`;
+}
+
+function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
+  const skill   = profile.skillLevel || profile.skill?.label || "-";
+  const persona = profile.personality || profile.personality?.primary || "-";
+  const rec     = profile.recommendations || {};
+  const whyArr  = Array.isArray(rec.why) ? rec.why : (Array.isArray(profile.why) ? profile.why : []);
+  const prefs   = profile.preferences?.core || [];
+  const courses = profile.matchedCourses || [];
+  const lodging  = rec.lodging || profile.lodging || "";
+  const mlInsights = rec.mlInsights || profile.mlInsights || null;
+  const alt      = rec.alternativeOptions || profile.alternativeOptions || null;
+  const altStyles = Array.isArray(alt?.courseStyles)
+    ? alt.courseStyles.map(s => (typeof s === "string" ? s : (s.style || ""))).filter(Boolean)
+    : [];
+
+  const lines = [];
+  lines.push(`You've completed the quiz! Here's your profile:\n`);
+  lines.push(`Skill Level: ${skill}`);
+  lines.push(`Personality: ${persona}\n`);
+  lines.push(`Recommendations`);
+  lines.push(`• Style: ${rec.courseStyle || "-"}`);
+  lines.push(`• Budget: ${rec.budgetLevel || "-"}`);
+  if (Array.isArray(rec.amenities)) { lines.push(`• Amenities:`); rec.amenities.forEach(a => lines.push(`  • ${a}`)); }
+  if (lodging) lines.push(`• Lodging: ${lodging}`);
+  if (whyArr.length) { lines.push(`\nWhy`); whyArr.forEach(w => lines.push(`• ${w}`)); }
+  if (mlInsights) {
+    lines.push(`\nML Insights`);
+    if (mlInsights.similarUserCount != null) lines.push(`• Based on ${mlInsights.similarUserCount} similar golfers`);
+    if (mlInsights.confidence != null)       lines.push(`• Model confidence: ${mlInsights.confidence}`);
+    if (mlInsights.dataQuality)              lines.push(`• Data quality: ${mlInsights.dataQuality}`);
+  }
+  if (altStyles.length) { lines.push(`\nAlternative Course Styles`); altStyles.forEach(s => lines.push(`• ${s}`)); }
+  if (courses.length) { lines.push(`\nMatched Courses`); courses.slice(0,6).forEach(c => lines.push(`• ${c.name}${c.score ? ` — score ${Number(c.score).toFixed(3)}` : ""}`)); }
+  if (prefs.length) { lines.push(`\nYour Preferences`); prefs.forEach(p => lines.push(`• ${p}`)); }
+  if (Object.keys(scores).length) {
+    lines.push(`\nScores`);
+    Object.entries(scores).forEach(([k,v]) => {
+      const label = k.replace(/([A-Z])/g,' $1');
+      lines.push(`• ${label}: ${Number(v).toFixed ? Number(v).toFixed(1) : v}`);
+    });
+  }
+  lines.push(`\nReply “feedback 5 great fit” or “feedback 2 too expensive”.`);
+  return lines.join("\n");
 }
 
 // Voyage re-rank (fail-open)
@@ -245,14 +297,66 @@ app.use("/api/chatbot", chatbotRouter);
 app.post("/api/chat", async (req, res) => {
   try {
     const sid = getSid(req, res);
-    const state = SESS.get(sid) || { lastLinks: [] };
+    const state = SESS.get(sid) || { lastLinks: [], sessionId: null, question: null, answers: {}, scores: {} };
     const { messages = [] } = req.body || {};
     const lastUser = [...messages].reverse().find(m => m.role === "user")?.content?.trim() || "";
     const locForQuery = extractLocation(lastUser);
+    const base = `${req.protocol}://${req.get("host")}`;
 
-    // quiz
-    if (/^\s*(start|quiz|pick\s*\d+|answer\s*\d+)\s*$/i.test(lastUser)) {
-      return chatbotRouter.handle(req, res);
+    // QUIZ: start (“start” or “start quiz”)
+    if (/^(start|begin|go|let.?s\s*start)(?:\s+quiz)?$/i.test(lastUser)) {
+      const r = await fetch(`${base}/api/chatbot/start`, {
+        method:"POST", headers:{ "Content-Type":"application/json" }, body:"{}"
+      });
+      const data = await r.json().catch(()=>null);
+      if (!data || !data.sessionId || !data.question) {
+        console.error("Quiz start failed or bad payload:", data);
+        return res.json({ html:"Started a new quiz, but I couldn't fetch a question. Try again." });
+      }
+      state.sessionId = data.sessionId;
+      state.question  = data.question || null;
+      state.answers   = {};
+      state.scores    = {};
+      state.lastLinks = [];
+      SESS.set(sid, state);
+      return res.json({ html: renderQuestionHTML(data.question, data.questionNumber || 1) });
+    }
+
+    // QUIZ: numeric pick (“pick 1”, “answer 2”, or just “1”)
+    const pickOnly = lastUser.match(/^(?:pick|answer|option)?\s*(\d+)\s*$/i);
+    if (pickOnly && state.sessionId && state.question?.id) {
+      const idx = Number(pickOnly[1]);
+      const payload = {
+        sessionId: state.sessionId,
+        questionId: state.question.id,
+        optionIndex: idx,
+        currentAnswers: state.answers,
+        currentScores: state.scores
+      };
+      const r = await fetch(`${base}/api/chatbot/answer`, {
+        method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload)
+      });
+      const data = await r.json().catch(()=>null);
+      if (!data) return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start quiz' again." });
+
+      if (data.complete) {
+        state.question = null; SESS.set(sid, state);
+        const html = renderFinalProfileHTML(data.profile, data.scores, data.totalQuestions).replace(/\n/g,"<br/>");
+        return res.json({ html });
+      }
+      if (data.question) {
+        state.question = data.question;
+        state.answers  = data.currentAnswers || state.answers;
+        state.scores   = data.currentScores  || state.scores;
+        SESS.set(sid, state);
+        return res.json({ html: renderQuestionHTML(data.question, data.questionNumber || (Object.keys(state.answers||{}).length + 1)) });
+      }
+      return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start quiz' again." });
+    }
+
+    // If a quiz is in progress, remind the user to answer/pick
+    if (state.sessionId && state.question) {
+      return res.json({ html: renderQuestionHTML(state.question, Object.keys(state.answers||{}).length + 1) });
     }
 
     // Retrieval (location-aware variants)
@@ -326,7 +430,6 @@ app.post("/api/chat", async (req, res) => {
       finalHits = finalHits.slice(0, 10);
     }
 
-
     // Context + links
     const MAX_CHARS = 12000;
     let context = "", links = [];
@@ -346,7 +449,7 @@ app.post("/api/chat", async (req, res) => {
 
     Rules:
     - Base everything ONLY on the Site Context. No guessing or outside knowledge.
-    - If there are drawbacks, mention them casually (\"watch out for...\").
+    - If there are drawbacks, mention them casually ("watch out for...").
     - Keep answers short (2–4 sentences) for normal questions.
     - Always use citations like [n] for facts.
     - If nothing relevant is in context, say: "${REFUSAL}".
