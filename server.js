@@ -1,27 +1,17 @@
 // server.js — Chat + Quiz + RAG over site_docs
-// Features: Voyage re-rank, list-intent output, location-aware retrieval,
-// pretty HTML, fixed sidecar (GET & POST), and working quiz handoff (HTML)
+// Features: Voyage re-rank (fail-open), list-intent output, location-aware retrieval,
+// pretty HTML, sidecar (GET & POST), and working quiz handoff (Render-safe).
 
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
 import { QdrantClient } from "@qdrant/js-client-rest";
+import fetch from "node-fetch"; // robust for Node < 18 too
 import chatbotRouter from "./api/golfChatbotRouter.js";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // ENV
-// OPENAI_API_KEY=...
-// QDRANT_URL=https://<cluster>.cloud.qdrant.io
-// QDRANT_API_KEY=... (if private)
-// QDRANT_COLLECTION=site_docs
-// SITE_BASE=https://golf.totalguide.net
-// SITE_VECTOR_NAME=text (optional)
-// VOYAGE_API_KEY=... (optional but recommended)
-// VOYAGE_RERANK_MODEL=rerank-2-lite | rerank-2
-// DEBUG_RAG=1 (optional for logs)
-// ──────────────────────────────────────────────────────────────────────────────
-
 const REFUSAL = "I don’t have that in the site content.";
 const DEBUG_RAG = process.env.DEBUG_RAG === "1";
 
@@ -29,10 +19,14 @@ const OPENAI_API_KEY   = process.env.OPENAI_API_KEY;
 const QDRANT_URL       = process.env.QDRANT_URL;
 const QDRANT_API_KEY   = process.env.QDRANT_API_KEY || "";
 const QDRANT_COLL      = process.env.QDRANT_COLLECTION || "site_docs";
-const SITE_BASE        = (process.env.SITE_BASE || "").replace(/\/+$/, "");
 const SITE_VECTOR_NAME = (process.env.SITE_VECTOR_NAME || "").trim();
 const VOYAGE_API_KEY      = (process.env.VOYAGE_API_KEY || "").trim();
 const VOYAGE_RERANK_MODEL = (process.env.VOYAGE_RERANK_MODEL || "rerank-2-lite").trim();
+const PORT = process.env.PORT || 8080;
+
+// IMPORTANT: local self-calls for quiz (works behind proxies on Render)
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/,"");
+const SELF_BASE = PUBLIC_BASE_URL || `http://127.0.0.1:${PORT}`;
 
 if (!OPENAI_API_KEY) { console.error("Missing OPENAI_API_KEY"); process.exit(1); }
 if (!QDRANT_URL)     { console.error("Missing QDRANT_URL");     process.exit(1); }
@@ -41,73 +35,58 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const qdrant = new QdrantClient({ url: QDRANT_URL, apiKey: QDRANT_API_KEY });
 
 const app = express();
+app.set("trust proxy", 1);         // honor X-Forwarded-Proto on Render
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 
-// Detect list-style intent (e.g., “best/top/near/under $…”)
 function isListIntent(q) {
   if (!q) return false;
   const s = q.toLowerCase();
   return /(best|top|list|recommend|recommendation|near|close to|within|under\s*\$?\d+|courses?\s+(in|near|around)|bucket\s*list)/i.test(s);
 }
-
 function normalizeText(s) {
   return (s || "").toString().toLowerCase().replace(/\s+/g, " ").trim();
 }
-
 function anchor(u) {
   const esc = (t) => t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   try { const url = new URL(u); return `<a href="${esc(url.toString())}" target="_blank" rel="noreferrer">${esc(url.toString())}</a>`; }
   catch { return esc(u); }
 }
 
-// Convert simple markdown bullets/links into HTML for nicer answers
+// Markdown-ish -> HTML for LLM replies
 function renderReplyHTML(text = "") {
   const mdLink = (s) =>
     s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, label, url) => {
       const safe = url.replace(/"/g, "%22");
       return `<a href="${safe}" target="_blank" rel="noreferrer">${label}</a>`;
     });
-
   const lines = String(text).split(/\r?\n/);
   let html = [], listOpen = false, para = [];
-
-  function flushPara() {
+  const flushPara = () => {
     if (para.length) { html.push(`<p>${mdLink(para.join(" "))}</p>`); para = []; }
-  }
-
-  for (let raw of lines) {
+  };
+  for (const raw of lines) {
     const line = raw.trim();
-    if (!line) {
-      flushPara();
-      if (listOpen) { html.push("</ul>"); listOpen = false; }
-      continue;
-    }
+    if (!line) { flushPara(); if (listOpen) { html.push("</ul>"); listOpen = false; } continue; }
     if (/^([•\-\*]\s+)/.test(line)) {
       flushPara();
       if (!listOpen) { html.push("<ul>"); listOpen = true; }
-      const item = line.replace(/^([•\-\*]\s+)/, "").trim();
-      html.push(`<li>${mdLink(item)}</li>`);
-    } else {
-      para.push(line);
-    }
+      html.push(`<li>${mdLink(line.replace(/^([•\-\*]\s+)/, "").trim())}</li>`);
+    } else { para.push(line); }
   }
-  flushPara();
-  if (listOpen) html.push("</ul>");
+  flushPara(); if (listOpen) html.push("</ul>");
   return html.join("");
 }
 
-// Quiz render helpers (HTML to match your chat UI)
+// Quiz render helpers
 function renderQuestionHTML(q, num = 1) {
   const lines = (q.options || [])
-    .map((o, i) => `<li>${i}. ${o.emoji || ""} ${o.text}</li>`)
-    .join("");
+    .map((o, i) => `<li>${i}. ${o.emoji || ""} ${o.text}</li>`).join("");
   return `<strong>Question ${num}:</strong> ${q.text}<ul>${lines}</ul><div>Reply like: "pick 1" or just "1".</div>`;
 }
-
 function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   const skill   = profile.skillLevel || profile.skill?.label || "-";
   const persona = profile.personality || profile.personality?.primary || "-";
@@ -116,12 +95,10 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   const prefs   = profile.preferences?.core || [];
   const courses = profile.matchedCourses || [];
   const lodging  = rec.lodging || profile.lodging || "";
-  const mlInsights = rec.mlInsights || profile.mlInsights || null;
-  const alt      = rec.alternativeOptions || profile.alternativeOptions || null;
+  const ml = rec.mlInsights || profile.mlInsights || null;
+  const alt = rec.alternativeOptions || profile.alternativeOptions || null;
   const altStyles = Array.isArray(alt?.courseStyles)
-    ? alt.courseStyles.map(s => (typeof s === "string" ? s : (s.style || ""))).filter(Boolean)
-    : [];
-
+    ? alt.courseStyles.map(s => (typeof s === "string" ? s : (s.style || ""))).filter(Boolean) : [];
   const lines = [];
   lines.push(`You've completed the quiz! Here's your profile:\n`);
   lines.push(`Skill Level: ${skill}`);
@@ -132,11 +109,11 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   if (Array.isArray(rec.amenities)) { lines.push(`• Amenities:`); rec.amenities.forEach(a => lines.push(`  • ${a}`)); }
   if (lodging) lines.push(`• Lodging: ${lodging}`);
   if (whyArr.length) { lines.push(`\nWhy`); whyArr.forEach(w => lines.push(`• ${w}`)); }
-  if (mlInsights) {
+  if (ml) {
     lines.push(`\nML Insights`);
-    if (mlInsights.similarUserCount != null) lines.push(`• Based on ${mlInsights.similarUserCount} similar golfers`);
-    if (mlInsights.confidence != null)       lines.push(`• Model confidence: ${mlInsights.confidence}`);
-    if (mlInsights.dataQuality)              lines.push(`• Data quality: ${mlInsights.dataQuality}`);
+    if (ml.similarUserCount != null) lines.push(`• Based on ${ml.similarUserCount} similar golfers`);
+    if (ml.confidence != null)       lines.push(`• Model confidence: ${ml.confidence}`);
+    if (ml.dataQuality)              lines.push(`• Data quality: ${ml.dataQuality}`);
   }
   if (altStyles.length) { lines.push(`\nAlternative Course Styles`); altStyles.forEach(s => lines.push(`• ${s}`)); }
   if (courses.length) { lines.push(`\nMatched Courses`); courses.slice(0,6).forEach(c => lines.push(`• ${c.name}${c.score ? ` — score ${Number(c.score).toFixed(3)}` : ""}`)); }
@@ -175,18 +152,13 @@ async function voyageRerank(query, hits, topN = 40) {
     return hits.map((h,i)=>({ ...h, _voy: byIdx.has(i) ? byIdx.get(i) : -1e9 }))
                .sort((a,b)=>b._voy - a._voy)
                .map(({_voy, ...h}) => h);
-  } catch (e) {
-    if (DEBUG_RAG) console.warn("Voyage rerank failed:", e?.message || e);
-    return hits;
-  }
+  } catch { return hits; }
 }
 
 async function embedQuery(q) {
-  const EMB = "text-embedding-3-small";
-  const { data } = await openai.embeddings.create({ model: EMB, input: q });
+  const { data } = await openai.embeddings.create({ model: "text-embedding-3-small", input: q });
   return data[0].embedding;
 }
-
 async function retrieveSite(question, topK = 120) {
   const vector = await embedQuery(question);
   const body = {
@@ -196,14 +168,13 @@ async function retrieveSite(question, topK = 120) {
   const results = await qdrant.search(QDRANT_COLL, body);
   return results || [];
 }
-
 function isCourseURL(h) {
   const u = (h?.payload?.url || "").toLowerCase();
   return u.includes("/courses/");
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// UI (for local testing)
+// Minimal UI
 app.get("/", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!doctype html>
@@ -242,7 +213,6 @@ const log = document.getElementById('log');
 const box = document.getElementById('box');
 const btn = document.getElementById('btn');
 const side = document.getElementById('side');
-
 function render(html, isMe){
   const div = document.createElement('div');
   div.className = 'msg ' + (isMe ? 'me' : 'bot');
@@ -256,16 +226,10 @@ async function sendMessage(){
   render('<strong>You:</strong><br/>' + text, true);
   box.value = '';
   try{
-    const r = await fetch('/api/chat', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ messages:[{role:'user', content:text}] })
-    });
+    const r = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ messages:[{role:'user', content:text}] }) });
     const j = await r.json();
     render(j.html || 'I don’t have that in the site content.', false);
-  }catch(e){
-    render('Error: ' + (e.message||e), false);
-  }
+  }catch(e){ render('Error: ' + (e.message||e), false); }
   try{
     const r2 = await fetch('/api/sidecar?q=' + encodeURIComponent(text));
     const p = await r2.json();
@@ -300,14 +264,21 @@ app.post("/api/chat", async (req, res) => {
     const state = SESS.get(sid) || { lastLinks: [], sessionId: null, question: null, answers: {}, scores: {} };
     const { messages = [] } = req.body || {};
     const lastUser = [...messages].reverse().find(m => m.role === "user")?.content?.trim() || "";
-    const locForQuery = extractLocation(lastUser);
-    const base = `${req.protocol}://${req.get("host")}`;
+    const locForQuery = (function extractLocation(text = "") {
+      const t = text.trim();
+      let m = t.match(/\b(?:in|near|around)\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
+      if (m) return m[1].replace(/[.,]+$/,'').trim();
+      m = t.match(/\b(?:courses?|golf|weather)\s+in\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
+      if (m) return m[1].replace(/[.,]+$/,'').trim();
+      const words = t.replace(/[^A-Za-z\s-]/g, " ").trim().split(/\s+/);
+      if (words.length <= 3 && words.length > 0) return words.join(" ");
+      const tail = t.match(/([A-Za-z][A-Za-z\s-]{1,40})$/);
+      return tail ? tail[1].trim() : "";
+    })(lastUser);
 
-    // QUIZ: start (“start” or “start quiz”)
+    // QUIZ: start (“start” or “start quiz”) — use SELF_BASE to avoid proxy/proto issues
     if (/^(start|begin|go|let.?s\s*start)(?:\s+quiz)?$/i.test(lastUser)) {
-      const r = await fetch(`${base}/api/chatbot/start`, {
-        method:"POST", headers:{ "Content-Type":"application/json" }, body:"{}"
-      });
+      const r = await fetch(`${SELF_BASE}/api/chatbot/start`, { method:"POST", headers:{ "Content-Type":"application/json" }, body:"{}" });
       const data = await r.json().catch(()=>null);
       if (!data || !data.sessionId || !data.question) {
         console.error("Quiz start failed or bad payload:", data);
@@ -333,9 +304,7 @@ app.post("/api/chat", async (req, res) => {
         currentAnswers: state.answers,
         currentScores: state.scores
       };
-      const r = await fetch(`${base}/api/chatbot/answer`, {
-        method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload)
-      });
+      const r = await fetch(`${SELF_BASE}/api/chatbot/answer`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
       const data = await r.json().catch(()=>null);
       if (!data) return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start quiz' again." });
 
@@ -354,7 +323,7 @@ app.post("/api/chat", async (req, res) => {
       return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start quiz' again." });
     }
 
-    // If a quiz is in progress, remind the user to answer/pick
+    // If a quiz is in progress, remind
     if (state.sessionId && state.question) {
       return res.json({ html: renderQuestionHTML(state.question, Object.keys(state.answers||{}).length + 1) });
     }
@@ -410,17 +379,15 @@ app.post("/api/chat", async (req, res) => {
     }
     goodSite.sort((a,b)=> (b.score + 0.03*b._lex + typeBoost(b)) - (a.score + 0.03*a._lex + typeBoost(a)));
 
-    // Single-site corpus: skip host balancing entirely and keep the top matches
+    // Single-site corpus: skip host balancing entirely
     const balanced = goodSite.slice(0, 20);
 
-    // De-dupe by URL (preserves the behavior the rest of the code expects)
+    // De-dupe by URL and assemble final
     const keep = new Map();
     for (const h of balanced) {
       const key = h.payload?.url || "";
       if (!keep.has(key)) keep.set(key, h);
     }
-
-    // Build finalHits (prefer course pages first in list mode)
     let finalHits = [...keep.values()];
     if (isListIntent(lastUser)) {
       const courses  = finalHits.filter(isCourseURL);
@@ -456,7 +423,6 @@ app.post("/api/chat", async (req, res) => {
 
     # Site Context (cite with [n])
     ${context}`;
-
     if (isListIntent(lastUser)) {
       systemContent = `You are a friendly golf buddy who extracts concrete answers from the Site Context.
       The user asked for recommendations. Produce a clear, scannable LIST, not a generic summary.
@@ -513,7 +479,7 @@ app.post("/api/chat", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Sidecar: weather — supports GET and POST
+// Sidecar (GET & POST)
 app.get("/api/sidecar", async (req, res) => {
   try {
     const q = (req.query.q || req.query.text || "").toString();
@@ -531,7 +497,17 @@ app.post("/api/sidecar", async (req, res) => {
 
 async function buildSidecar(q) {
   try {
-    const loc = extractLocation(q || "");
+    const loc = (function extractLocation(text = "") {
+      const t = text.trim();
+      let m = t.match(/\b(?:in|near|around)\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
+      if (m) return m[1].replace(/[.,]+$/,'').trim();
+      m = t.match(/\b(?:courses?|golf|weather)\s+in\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
+      if (m) return m[1].replace(/[.,]+$/,'').trim();
+      const words = t.replace(/[^A-Za-z\s-]/g, " ").trim().split(/\s+/);
+      if (words.length <= 3 && words.length > 0) return words.join(" ");
+      const tail = t.match(/([A-Za-z][A-Za-z\s-]{1,40})$/);
+      return tail ? tail[1].trim() : "";
+    })(q || "");
     if (!loc) return "";
     const geo = await geocode(loc);
     if (!geo) return "";
@@ -539,19 +515,6 @@ async function buildSidecar(q) {
     return renderWeatherCard(geo, wx);
   } catch { return ""; }
 }
-
-function extractLocation(text = "") {
-  const t = text.trim();
-  let m = t.match(/\b(?:in|near|around)\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
-  if (m) return m[1].replace(/[.,]+$/,'').trim();
-  m = t.match(/\b(?:courses?|golf|weather)\s+in\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
-  if (m) return m[1].replace(/[.,]+$/,'').trim();
-  const words = t.replace(/[^A-Za-z\s-]/g, " ").trim().split(/\s+/);
-  if (words.length <= 3 && words.length > 0) return words.join(" ");
-  const tail = t.match(/([A-Za-z][A-Za-z\s-]{1,40})$/);
-  return tail ? tail[1].trim() : "";
-}
-
 async function geocode(place) {
   const url = "https://geocode.maps.co/search?q=" + encodeURIComponent(place) + "&format=json";
   const r = await fetch(url, { headers: { "User-Agent": "totalguide-chat/1.0" } });
@@ -560,7 +523,6 @@ async function geocode(place) {
   const best = j.find(x => /United States|USA|Massachusetts|MA/i.test(x.display_name)) || j[0];
   return { lat: Number(best.lat), lon: Number(best.lon), name: best.display_name };
 }
-
 async function fetchWeather(lat, lon) {
   const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat +
               "&longitude=" + lon +
@@ -569,19 +531,16 @@ async function fetchWeather(lat, lon) {
   const j = await r.json().catch(() => null);
   return j;
 }
-
 function renderWeatherCard(geo, wx) {
   if (!wx || (!wx.current_weather && !wx.current)) return "";
   const cur = wx.current_weather || wx.current || {};
   const temp = cur.temperature_2m ?? cur.temperature ?? "–";
   const wind = cur.wind_speed_10m ?? cur.windspeed ?? "–";
-
   const d = wx.daily || {};
   const time = d.time || [];
   const tmax = d.temperature_2m_max || [];
   const tmin = d.temperature_2m_min || [];
   const prec = d.precipitation_sum || [];
-
   let rows = "";
   const days = Math.min(time.length, 3);
   for (let i = 0; i < days; i++) {
@@ -591,7 +550,6 @@ function renderWeatherCard(geo, wx) {
               '<span>' + (prec[i] ?? 0) + 'mm</span>' +
             '</div>';
   }
-
   return '' +
     '<div class="card">' +
       '<div style="font-weight:600;margin-bottom:6px">Weather – ' + geo.name + '</div>' +
@@ -606,24 +564,17 @@ function renderWeatherCard(geo, wx) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Health & debug
+app.use("/api/chatbot", chatbotRouter); // keep proxy router
 app.get("/api/ping", (_, res) => res.json({ ok: true }));
-
 app.get("/api/debug/site-top", async (req, res) => {
   try {
-    const EMB = "text-embedding-3-small";
-    const q = req.query.q || "wayland";
-    const { data } = await openai.embeddings.create({ model: EMB, input: q });
+    const { data } = await openai.embeddings.create({ model: "text-embedding-3-small", input: (req.query.q || "wayland").toString() });
     const vector = data[0].embedding;
-    const body = { vector, limit: 10, with_payload: true, with_vectors: false,
-                   ...(SITE_VECTOR_NAME ? { using: SITE_VECTOR_NAME } : {}) };
+    const body = { vector, limit: 10, with_payload: true, with_vectors: false, ...(SITE_VECTOR_NAME ? { using: SITE_VECTOR_NAME } : {}) };
     const results = await qdrant.search(QDRANT_COLL, body);
-    const out = (results || []).map(r => ({
-      score: r.score, url: r.payload?.url, title: r.payload?.title,
-      preview: (r.payload?.text || "").slice(0,160)
-    }));
-    res.json({ q, collection: QDRANT_COLL, using: SITE_VECTOR_NAME || "(default)", out });
+    const out = (results || []).map(r => ({ score: r.score, url: r.payload?.url, title: r.payload?.title, preview: (r.payload?.text || "").slice(0,160) }));
+    res.json({ q: req.query.q || "wayland", collection: QDRANT_COLL, using: SITE_VECTOR_NAME || "(default)", out });
   } catch (e) { res.status(500).json({ error: String(e) }); }
 });
 
-const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log("Server listening on", PORT));
