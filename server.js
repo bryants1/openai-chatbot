@@ -1,13 +1,10 @@
-// server.js — Chat + Quiz + Site-Search–assisted RAG over site_docs (summarizes + clickable links)
-// No 5-D vectors here; answers grounded in your site content + site search.
-// Quiz is proxied to your Vercel app via /api/chatbot/* (router mount unchanged).
+// server.js — Chat + Quiz + RAG over site_docs (Voyage re-rank + list intent + fixed sidecar)
 
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
 import { QdrantClient } from "@qdrant/js-client-rest";
-import { load as loadHTML } from "cheerio";
 import chatbotRouter from "./api/golfChatbotRouter.js";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -16,252 +13,250 @@ import chatbotRouter from "./api/golfChatbotRouter.js";
 // QDRANT_URL=https://<cluster>.aws.cloud.qdrant.io
 // QDRANT_API_KEY=... (if private)
 // QDRANT_COLLECTION=site_docs
-// SITE_BASE=https://golf.totalguide.net  (or set SITE_SEARCH_BASE)
-// PUBLIC_BASE_URL=https://<this-render-app-domain>   (optional; fallback uses req.host)
+// SITE_BASE=https://golf.totalguide.net
+// PUBLIC_BASE_URL=... (optional)
 // Optional named vector for site_docs: SITE_VECTOR_NAME=text
-// Optional debug: DEBUG_RAG=1
+// VOYAGE_API_KEY=...      (optional but recommended)
+// VOYAGE_RERANK_MODEL=rerank-2-lite  (or rerank-2)
+// DEBUG_RAG=1  (optional)
 // ──────────────────────────────────────────────────────────────────────────────
 
 const REFUSAL = "I don’t have that in the site content.";
 const DEBUG_RAG = process.env.DEBUG_RAG === "1";
 
-const OPENAI_API_KEY  = process.env.OPENAI_API_KEY;
-const QDRANT_URL      = process.env.QDRANT_URL;
-const QDRANT_API_KEY  = process.env.QDRANT_API_KEY || "";
-const QDRANT_COLL     = process.env.QDRANT_COLLECTION || "site_docs";
-const SITE_VECTOR_NAME = (process.env.SITE_VECTOR_NAME || "").trim(); // leave blank for unnamed vector
-const SITE_SEARCH_BASE = (process.env.SITE_BASE || process.env.SITE_SEARCH_BASE || "").replace(/\/+$/, "");
+const OPENAI_API_KEY   = process.env.OPENAI_API_KEY;
+const QDRANT_URL       = process.env.QDRANT_URL;
+const QDRANT_API_KEY   = process.env.QDRANT_API_KEY || "";
+const QDRANT_COLL      = process.env.QDRANT_COLLECTION || "site_docs";
+const SITE_BASE        = (process.env.SITE_BASE || "").replace(/\/+$/, "");
+const SITE_VECTOR_NAME = (process.env.SITE_VECTOR_NAME || "").trim();
 const PUBLIC_BASE_URL  = process.env.PUBLIC_BASE_URL || "";
 
-if (!OPENAI_API_KEY || !QDRANT_URL) {
-  console.error("Missing env. Need OPENAI_API_KEY and QDRANT_URL (site_docs).");
-  process.exit(1);
+const VOYAGE_API_KEY      = (process.env.VOYAGE_API_KEY || "").trim();
+const VOYAGE_RERANK_MODEL = (process.env.VOYAGE_RERANK_MODEL || "rerank-2-lite").trim();
+
+if (!OPENAI_API_KEY) {
+  console.error("Missing OPENAI_API_KEY"); process.exit(1);
+}
+if (!QDRANT_URL) {
+  console.error("Missing QDRANT_URL (site_docs)."); process.exit(1);
 }
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const qdrant = new QdrantClient({ url: QDRANT_URL, apiKey: QDRANT_API_KEY });
 
-// ──────────────────────────────────────────────────────────────────────────────
-// App
 const app = express();
-app.use(cors({ origin: "*" }));
-app.use(express.json());
-
-// UI (two-pane; composer pinned bottom-left)
-app.get("/", (req, res) => {
-  res.type("html").send(`
-    <!doctype html>
-    <html>
-    <head>
-      <meta charset="utf-8"/>
-      <meta name="viewport" content="width=device-width,initial-scale=1"/>
-      <title>OpenAI Chatbot</title>
-      <style>
-        :root { --bg:#fafafa; --fg:#111; --muted:#666; --border:#ddd; --accent:#06c; }
-        *{box-sizing:border-box}
-        html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-        .page{min-height:100vh;display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:2fr 1fr}
-        header{grid-column:1/3;padding:14px 20px;border-bottom:1px solid var(--border);background:#fff;position:sticky;top:0;z-index:2}
-        h1{margin:0;font-size:20px}
-        .hint{color:var(--muted);font-size:12px;margin-top:4px}
-        .log-wrap{grid-row:2;grid-column:1;overflow:auto;padding:16px 20px}
-        .msg{margin:10px 0;line-height:1.5;white-space:pre-wrap}
-        .me{font-weight:600;margin-bottom:6px}
-        .bot{white-space:normal}
-        a{color:var(--accent);text-decoration:none}
-        .side{grid-row:2/4;grid-column:2;border-left:1px solid var(--border);background:#fff;display:flex;flex-direction:column}
-        .side-head{padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600}
-        .side-body{flex:1 1 auto;overflow:auto;padding:12px 16px}
-        .card{border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px;background:#fff}
-        .composer-wrap{grid-row:3;grid-column:1;background:#fff;border-top:1px solid var(--border);position:sticky;bottom:0}
-        .composer{display:flex;gap:8px;padding:12px 20px;max-width:1000px;margin:0 auto}
-        .composer textarea{flex:1;padding:10px 12px;resize:none;min-height:44px;max-height:160px;border:1px solid var(--border);border-radius:8px;font:inherit;background:#fff}
-        .composer button{padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer}
-      </style>
-    </head>
-    <body>
-      <div class="page">
-        <header>
-          <h1>OpenAI Chatbot</h1>
-          <div class="hint">Try: <code>start quiz</code>, <code>pick 1</code>, or <code>courses in stow</code></div>
-        </header>
-
-        <div id="log" class="log-wrap"></div>
-
-        <aside class="side">
-          <div class="side-head">Related</div>
-          <div id="side" class="side-body">
-            <div class="card">Ask about a place (e.g., “courses in Stow”) to see local weather here.</div>
-          </div>
-        </aside>
-
-        <div class="composer-wrap">
-          <div class="composer">
-            <textarea id="msg" placeholder="Type a message… (Enter = send, Shift+Enter = newline)"></textarea>
-            <button id="sendBtn">Send</button>
-          </div>
-        </div>
-      </div>
-
-      <script>
-        const log  = document.getElementById('log');
-        const side = document.getElementById('side');
-        const box  = document.getElementById('msg');
-        const btn  = document.getElementById('sendBtn');
-
-        function addHTML(container, html){
-          const row = document.createElement('div');
-          row.className = 'msg';
-          row.innerHTML = html;
-          container.appendChild(row);
-          container.scrollTop = container.scrollHeight;
-        }
-        function addYou(text){
-          const safe = text.replace(/</g,'&lt;');
-          addHTML(log, '<div class="me">You:</div><div>'+safe+'</div>');
-        }
-
-        async function sendMessage(){
-          const m = box.value.trim();
-          if(!m) return;
-          box.value = '';
-          addYou(m);
-          try{
-            const r = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({messages:[{role:'user',content:m}]})});
-            const d = await r.json().catch(()=>({}));
-            if (d.html) addHTML(log, '<div class="bot">'+d.html+'</div>');
-            else addHTML(log, '<div class="bot">'+(d.reply||'(no reply)').replace(/</g,'&lt;')+'</div>');
-          }catch(e){ addHTML(log, '<div class="bot">Error: '+(e?.message||e)+'</div>'); }
-
-          try{
-            const s = await fetch('/api/sidecar?q='+encodeURIComponent(m));
-            const p = await s.json().catch(()=>({}));
-            side.innerHTML = p.html || '<div class="card">No related info.</div>';
-          }catch{ side.innerHTML = '<div class="card">No related info.</div>'; }
-        }
-
-        btn.addEventListener('click', sendMessage);
-        box.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); }});
-        window.addEventListener('load', ()=> box.focus());
-      </script>
-    </body>
-    </html>
-  `);
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Session (cookie)
-const SESS = new Map(); // sid -> { sessionId, question, answers, scores, lastLinks: [] }
-function getSid(req, res) {
-  const raw = req.headers.cookie || "";
-  const found = raw.split(";").map(s=>s.trim()).find(s=>s.startsWith("chat_sid="));
-  if (found) return found.split("=")[1];
-  const sid = Date.now().toString(36) + Math.random().toString(36).slice(2);
-  res.setHeader("Set-Cookie", `chat_sid=${sid}; Path=/; HttpOnly; SameSite=Lax`);
-  return sid;
-}
+app.use(cors());
+app.use(express.json({ limit: "2mb" }));
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
-function anchor(url, label){ const safe=(label||url).replace(/</g,"&lt;"); const href=url.replace(/"/g,"%22"); return `<a href="${href}" target="_blank" rel="noopener">${safe}</a>`; }
-function normalizeText(s){ return (s||"").trim().replace(/\s+/g," "); }
-function pickMinScoreFor(query){ const wc=normalizeText(query).split(/\s+/).filter(Boolean).length; if (wc<=1) return 0.18; if (wc===2) return 0.22; return 0.24; }
 
-// Pretty final renderer
-function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
-  const skill   = profile.skillLevel || profile.skill?.label || "-";
-  const persona = profile.personality || profile.personality?.primary || "-";
-  const rec     = profile.recommendations || {};
-  const whyArr  = Array.isArray(rec.why) ? rec.why : (Array.isArray(profile.why) ? profile.why : []);
-  const prefs   = profile.preferences?.core || [];
-  const courses = profile.matchedCourses || [];
-  const lodging  = rec.lodging || profile.lodging || "";
-  const mlInsights = rec.mlInsights || profile.mlInsights || null;
-  const alt      = rec.alternativeOptions || profile.alternativeOptions || null;
-  const altStyles = Array.isArray(alt?.courseStyles) ? alt.courseStyles.map(s => (typeof s === "string" ? s : (s.style || ""))).filter(Boolean) : [];
-
-  const lines = [];
-  lines.push(`You've completed the quiz! Here's your profile:\n`);
-  lines.push(`Skill Level: ${skill}`);
-  lines.push(`Personality: ${persona}\n`);
-  lines.push(`Recommendations`);
-  lines.push(`• Style: ${rec.courseStyle || "-"}`);
-  lines.push(`• Budget: ${rec.budgetLevel || "-"}`);
-  if (Array.isArray(rec.amenities)) { lines.push(`• Amenities:`); rec.amenities.forEach(a => lines.push(`  • ${a}`)); }
-  if (lodging) lines.push(`• Lodging: ${lodging}`);
-  if (whyArr.length) { lines.push(`\nWhy`); whyArr.forEach(w => lines.push(`• ${w}`)); }
-  if (mlInsights) {
-    lines.push(`\nML Insights`);
-    if (mlInsights.similarUserCount != null) lines.push(`• Based on ${mlInsights.similarUserCount} similar golfers`);
-    if (mlInsights.confidence != null)       lines.push(`• Model confidence: ${mlInsights.confidence}`);
-    if (mlInsights.dataQuality)              lines.push(`• Data quality: ${mlInsights.dataQuality}`);
-  }
-  if (altStyles.length) { lines.push(`\nAlternative Course Styles`); altStyles.forEach(s => lines.push(`• ${s}`)); }
-  if (courses.length) { lines.push(`\nMatched Courses`); courses.slice(0,6).forEach(c => lines.push(`• ${c.name}${c.score ? ` — score ${Number(c.score).toFixed(3)}` : ""}`)); }
-  if (prefs.length) { lines.push(`\nYour Preferences`); prefs.forEach(p => lines.push(`• ${p}`)); }
-  if (Object.keys(scores).length) {
-    lines.push(`\nScores`);
-    Object.entries(scores).forEach(([k,v]) => {
-      const label = k.replace(/([A-Z])/g,' $1');
-      lines.push(`• ${label}: ${Number(v).toFixed ? Number(v).toFixed(1) : v}`);
-    });
-  }
-  lines.push(`\nReply “feedback 5 great fit” or “feedback 2 too expensive”.`);
-  return lines.join("\n");
+// Detect list-style intent (e.g., “best/top/near/under $…”)
+function isListIntent(q) {
+  if (!q) return false;
+  const s = q.toLowerCase();
+  return /(best|top|list|recommend|recommendation|near|close to|within|under\s*\$?\d+|courses?\s+(in|near|around)|bucket\s*list)/i.test(s);
 }
 
-// Embeddings + site retrieval
-const EMB_MODEL = "text-embedding-3-small";
+function normalizeText(s) {
+  return (s || "").toString().toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function anchor(u) {
+  const esc = (t) => t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  try { const url = new URL(u); return `<a href="${esc(url.toString())}" target="_blank" rel="noreferrer">${esc(url.toString())}</a>`; }
+  catch { return esc(u); }
+}
+
+// Convert simple markdown bullets/links into HTML for nicer answers
+function renderReplyHTML(text = "") {
+  const mdLink = (s) =>
+    s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, label, url) => {
+      const safe = url.replace(/"/g, "%22");
+      return `<a href="${safe}" target="_blank" rel="noreferrer">${label}</a>`;
+    });
+
+  const lines = String(text).split(/\r?\n/);
+  let html = [], listOpen = false, para = [];
+
+  function flushPara() {
+    if (para.length) {
+      const p = mdLink(para.join(" "));
+      html.push(`<p>${p}</p>`);
+      para = [];
+    }
+  }
+
+  for (let raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      flushPara();
+      if (listOpen) { html.push("</ul>"); listOpen = false; }
+      continue;
+    }
+    if (/^([•\-\*]\s+)/.test(line)) {
+      flushPara();
+      if (!listOpen) { html.push("<ul>"); listOpen = true; }
+      const item = line.replace(/^([•\-\*]\s+)/, "").trim();
+      html.push(`<li>${mdLink(item)}</li>`);
+    } else {
+      para.push(line);
+    }
+  }
+  flushPara();
+  if (listOpen) html.push("</ul>");
+  return html.join("");
+}
+
+// Voyage re-rank (fail-open). Input = Qdrant hits array.
+async function voyageRerank(query, hits, topN = 40) {
+  try {
+    if (!VOYAGE_API_KEY || !hits?.length) return hits;
+    const url = "https://api.voyageai.com/v1/rerank";
+    const documents = hits.map(h => {
+      const t = (h?.payload?.title || h?.payload?.h1 || "").toString();
+      const x = (h?.payload?.text  || "").toString();
+      const combined = (t && x) ? `${t}\n\n${x}` : (t || x);
+      return combined || "";
+    });
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${VOYAGE_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: VOYAGE_RERANK_MODEL,
+        query,
+        documents,
+        top_n: Math.min(topN, documents.length),
+      }),
+    });
+    if (!r.ok) return hits;
+    const data = await r.json();
+    const order = (data?.data || []).map(d => ({ idx: d.index, score: d.relevance_score }));
+    if (!order.length) return hits;
+    const byIdx = new Map(order.map(o => [o.idx, o.score]));
+    return hits
+      .map((h, i) => ({ ...h, _voy: byIdx.has(i) ? byIdx.get(i) : -1e9 }))
+      .sort((a, b) => b._voy - a._voy)
+      .map(({ _voy, ...h }) => h);
+  } catch (e) {
+    if (DEBUG_RAG) console.warn("Voyage rerank failed:", e?.message || e);
+    return hits;
+  }
+}
+
 async function embedQuery(q) {
-  const { data } = await openai.embeddings.create({ model: EMB_MODEL, input: q });
+  const EMB = "text-embedding-3-small";
+  const { data } = await openai.embeddings.create({ model: EMB, input: q });
   return data[0].embedding;
 }
-async function retrieveSite(question, topK = 12) {
+
+async function retrieveSite(question, topK = 40) {
   const vector = await embedQuery(question);
-  const body = { vector, limit: topK, with_payload: true, with_vectors: false, ...(SITE_VECTOR_NAME ? { using: SITE_VECTOR_NAME } : {}) };
+  const body = {
+    vector, limit: topK, with_payload: true, with_vectors: false,
+    ...(SITE_VECTOR_NAME ? { using: SITE_VECTOR_NAME } : {}),
+  };
   const results = await qdrant.search(QDRANT_COLL, body);
   return results || [];
 }
 
-// SSR site search
-async function siteSearchHTML(query, limit = 8) {
-  if (!SITE_SEARCH_BASE) return [];
-  const url = `${SITE_SEARCH_BASE}/search?query=${encodeURIComponent(query)}`;
-  try {
-    const r = await fetch(url, { headers:{ "User-Agent":"site-search/1.0" } });
-    if (!r.ok) return [];
-    const html = await r.text();
-    const $ = loadHTML(html);
-    const items = [];
-    $(".search-result, .result, .item").each((_, el) => {
-      const a = $(el).find("a[href]").first();
-      const href = a.attr("href") || "";
-      const title = a.text().trim();
-      const snip = $(el).text().replace(/\s+/g," ").trim();
-      if (!href || !title) return;
-      const abs = href.startsWith("http") ? href : new URL(href, SITE_SEARCH_BASE + "/").toString();
-      items.push({ url: abs, title, snippet: snip.slice(0,300) });
-    });
-    if (!items.length) {
-      $("main a[href]").slice(0, limit).each((_, a) => {
-        const href=$(a).attr("href")||""; const title=$(a).text().trim();
-        if (!href || !title) return;
-        const abs = href.startsWith("http") ? href : new URL(href, SITE_SEARCH_BASE + "/").toString();
-        items.push({ url: abs, title, snippet: title });
-      });
-    }
-    // De-dup
-    const seen = new Set(); const dedup = [];
-    for (const it of items) {
-      if (seen.has(it.url)) continue;
-      seen.add(it.url); dedup.push(it);
-      if (dedup.length >= limit) break;
-    }
-    return dedup;
-  } catch {
-    return [];
-  }
+// ──────────────────────────────────────────────────────────────────────────────
+// Minimal UI (for quick local testing)
+app.get("/", (req, res) => {
+  const origin = PUBLIC_BASE_URL || `https://${req.get("host")}`;
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`<!doctype html>
+<html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>OpenAI Chatbot</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;background:#fafafa;color:#222;margin:0}
+.container{display:grid;grid-template-columns:2fr 1fr;gap:24px;max-width:1200px;margin:24px auto;padding:0 16px}
+.card{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+h1{font-size:20px;margin:0 0 8px} .muted{color:#777} .row{display:flex;gap:8px}
+input,textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px}
+button{padding:10px 14px;border-radius:10px;border:1px solid #0a7;cursor:pointer}
+.msg{padding:10px 12px;border-radius:10px;margin:8px 0}
+.me{background:#e9f7ff} .bot{background:#f7f7f7}
+pre{white-space:pre-wrap}
+</style></head>
+<body>
+<div class="container">
+  <div class="card">
+    <h1>OpenAI Chatbot</h1>
+    <div class="muted">Try: <code>best courses near boston</code> or <code>start</code> for quiz</div>
+    <div id="log"></div>
+    <div class="row">
+      <textarea id="box" rows="2" placeholder="Type a message…"></textarea>
+      <button id="btn">Send</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Related</h2>
+    <div id="side" class="muted">No related info.</div>
+  </div>
+</div>
+<script>
+const log = document.getElementById('log');
+const box = document.getElementById('box');
+const btn = document.getElementById('btn');
+const side = document.getElementById('side');
+
+function render(html, isMe){
+  const div = document.createElement('div');
+  div.className = 'msg ' + (isMe ? 'me' : 'bot');
+  div.innerHTML = html;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
 }
+async function sendMessage(){
+  const text = box.value.trim();
+  if(!text) return;
+  render('<strong>You:</strong><br/>' + text, true);
+  box.value = '';
+  try{
+    const r = await fetch('/api/chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ messages:[{role:'user', content:text}] })
+    });
+    const j = await r.json();
+    render(j.html || '${REFUSAL}', false);
+  }catch(e){
+    render('Error: ' + (e.message||e), false);
+  }
+  try{
+    // now uses GET; server also supports POST
+    const r2 = await fetch('/api/sidecar?q=' + encodeURIComponent(text));
+    const p = await r2.json();
+    side.innerHTML = p.html || '<div class="card">No related info.</div>';
+  }catch{ side.innerHTML = '<div class="card">No related info.</div>'; }
+}
+btn.addEventListener('click', sendMessage);
+box.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); }});
+window.addEventListener('load', ()=> box.focus());
+</script>
+</body></html>`);
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Sessions
+const SESS = new Map(); // sid -> { sessionId, question, answers, scores, lastLinks: [] }
+function getSid(req, res) {
+  const cookie = req.headers.cookie || "";
+  const m = /sid=([A-Za-z0-9_-]+)/.exec(cookie);
+  if (m) return m[1];
+  const sid = Math.random().toString(36).slice(2);
+  res.setHeader("Set-Cookie", `sid=${sid}; Path=/; HttpOnly; SameSite=Lax`);
+  return sid;
+}
+
+// Mount quiz router once
+app.use("/api/chatbot", chatbotRouter);
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Chat endpoint (QUIZ + RAG)
@@ -271,117 +266,56 @@ app.post("/api/chat", async (req, res) => {
     const state = SESS.get(sid) || { sessionId:null, question:null, answers:{}, scores:{}, lastLinks:[] };
     const { messages = [] } = req.body || {};
     const lastUser = [...messages].reverse().find(m => m.role === "user")?.content?.trim() || "";
-    const base = PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
 
-    // Quick “links”
-    if (/^(link|links|source|sources)\b/i.test(lastUser) && !state.question) {
-      return res.json({ html: state.lastLinks.length ? state.lastLinks.map(u=>`• ${anchor(u)}`).join("<br/>") : REFUSAL });
+    // quiz handoff
+    if (/^\s*(start|quiz|pick\s*\d+|answer\s*\d+)\s*$/i.test(lastUser)) {
+      return chatbotRouter.handle(req, res);
     }
 
-    // QUIZ: start (“start” or “start quiz”)
-    if (/^(start|begin|go|let.?s\s*start)(?:\s+quiz)?$/i.test(lastUser)) {
-      const r = await fetch(`${base}/api/chatbot/start`, {
-        method:"POST", headers:{ "Content-Type":"application/json" }, body:"{}"
-      });
-      const data = await r.json().catch(()=>null);
-      if (!data || !data.sessionId || !data.question) {
-        console.error("Quiz start failed or bad payload:", data);
-        return res.json({ html:"Started a new quiz, but I couldn't fetch a question. Try again." });
-      }
-      state.sessionId = data.sessionId;
-      state.question  = data.question || null;
-      state.answers = {}; state.scores = {}; state.lastLinks = [];
-      SESS.set(sid, state);
-
-      const q = data.question;
-      const lines = (q.options || []).map((o,i)=> `<li>${i}. ${o.emoji || ""} ${o.text}</li>`).join("");
-      return res.json({ html:`<strong>Question ${data.questionNumber || 1}:</strong> ${q.text}<ul>${lines}</ul><div>Reply like: "pick 1" or just "1".</div>` });
-    }
-
-    // QUIZ: numeric pick while active
-    const choiceMatch = lastUser.match(/^(?:pick|option)?\s*(\d+)\s*$/i);
-    if (choiceMatch && state.sessionId && state.question?.id) {
-      const idx = Number(choiceMatch[1]);
-      const payload = { sessionId:state.sessionId, questionId:state.question.id, optionIndex:idx, currentAnswers:state.answers, currentScores:state.scores };
-      const r = await fetch(`${base}/api/chatbot/answer`, {
-        method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload)
-      });
-      const data = await r.json().catch(()=>null);
-      if (!data) return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start quiz' again." });
-
-      if (data.complete) {
-        state.question = null;
-        SESS.set(sid, state);
-        const html = renderFinalProfileHTML(data.profile, data.scores, data.totalQuestions);
-        return res.json({ html });
-      }
-      if (data.question) {
-        state.question = data.question;
-        state.answers  = data.currentAnswers || state.answers;
-        state.scores   = data.currentScores  || state.scores;
-        SESS.set(sid, state);
-        const q = data.question;
-        const lines = (q.options || []).map((o,i)=> `<li>${i}. ${o.emoji || ""} ${o.text}</li>`).join("");
-        return res.json({ html:`<strong>Question ${data.questionNumber}:</strong> ${q.text}<ul>${lines}</ul><div>Reply like: "pick 1" or just "1".</div>` });
-      }
-      return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start quiz' again." });
-    }
-
-    // If a quiz is in progress, ignore RAG and remind the user to answer/pick
-    if (state.sessionId && state.question) {
-      const q = state.question;
-      const lines = (q.options || []).map((o,i)=> `<li>${i}. ${o.emoji || ""} ${o.text}</li>`).join("");
-      return res.json({ html:
-        `<strong>Question ${Object.keys(state.answers||{}).length + 1}:</strong> ${q.text}` +
-        `<ul>${lines}</ul><div>Reply like: "pick 1" or just "1".</div>`
-      });
-    }
-
-    // ---------------- Site-search–assisted RAG ----------------
-    // Two-pass: vector search + site search HTML
-    const variants = [lastUser, lastUser.toLowerCase(), lastUser.replace(/[^\w\s]/g," ")]
-      .filter((v,i,arr)=> normalizeText(v) && arr.indexOf(v) === i);
-
+    // Retrieve candidates from Qdrant
+    const variants = [lastUser, lastUser.toLowerCase(), lastUser.replace(/[^\w\s]/g," ")].filter(Boolean);
     let siteHits = [];
     for (const v of variants) {
-      const hits = await retrieveSite(v, 12);
+      const hits = await retrieveSite(v, 40);
       siteHits = [...siteHits, ...(hits || [])];
-      if (siteHits.length >= 12) break;
+      if (siteHits.length >= 40) break;
     }
 
-    const searchItems = await siteSearchHTML(lastUser, 8);
-    for (const rItem of searchItems) {
-      siteHits.push({ score: 0.23, payload: { url: rItem.url, title: rItem.title, text: rItem.snippet } });
-    }
+    // Voyage re-rank
+    siteHits = await voyageRerank(lastUser, siteHits, 40);
 
-    // de-dup by url#chunk
+    // Dedup by url#chunk
     const seen = new Set();
     siteHits = siteHits.filter(h => {
       const key = `${h.payload?.url}#${h.payload?.chunk_index ?? "html"}`;
       if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+      seen.add(key); return true;
     });
 
-    // dynamic threshold (short queries allowed)
-    const minScore = pickMinScoreFor(lastUser);
-    let goodSite = siteHits.filter(h => (h.score ?? 0) >= minScore || searchItems.some(s => s.url === h.payload?.url));
-    if (DEBUG_RAG) {
-      console.log("[RAG] minScore", minScore, "goodSite", goodSite.length);
-      console.log(goodSite.slice(0,3).map(x => ({ score:x.score, url:x.payload?.url })));
+    // Filter + tiny lexical boost
+    const qlen = lastUser.split(/\s+/).filter(Boolean).length;
+    const dynamicThreshold = 0.10 + Math.min(0.15, qlen * 0.01);
+    const tokens = normalizeText(lastUser).split(/\s+/).filter(t => t && t.length > 2);
+    function lexBoost(h) {
+      const hay = normalizeText((h?.payload?.title || "") + " " + (h?.payload?.text || ""));
+      let k = 0; for (const t of tokens) if (hay.includes(t)) k++; return k;
     }
-    if (!goodSite.length) return res.json({ html: REFUSAL });
 
-    // lightweight lexical boost
-    const tokens = (lastUser.toLowerCase().match(/[a-z]{3,}/g) || []);
-    function lexBoost(hit) {
-      const hay = (`${hit.payload?.title || ""} ${hit.payload?.text || ""} ${hit.payload?.url || ""}`).toLowerCase();
-      let k = 0; for (const t of tokens) if (hay.includes(t)) k++;
-      return k;
+    const goodSite = siteHits
+      .filter(h => (h?.score ?? 0) >= dynamicThreshold)
+      .map(h => ({ ...h, _lex: lexBoost(h) }));
+
+    // Prefer course pages slightly over articles when list intent
+    function typeBoost(h){
+      if (!isListIntent(lastUser)) return 0;
+      const u = (h?.payload?.url || "").toLowerCase();
+      if (u.includes("/courses/")) return 0.15;
+      if (u.includes("/articles/")) return 0.05;
+      return 0;
     }
-    goodSite.sort((a,b)=> (b.score + 0.03*lexBoost(b)) - (a.score + 0.03*lexBoost(a)));
+    goodSite.sort((a,b)=> (b.score + 0.03*b._lex + typeBoost(b)) - (a.score + 0.03*a._lex + typeBoost(a)));
 
-    // keep top-2 + host-balance
+    // keep top-2 + host-balance to ~10
     const top2 = goodSite.slice(0,2);
     const byHost = new Map();
     for (const h of goodSite) {
@@ -391,61 +325,76 @@ app.post("/api/chat", async (req, res) => {
       byHost.get(host).push(h);
     }
     const balanced = [];
-    for (const [,arr] of byHost) { balanced.push(...arr.slice(0,2)); if (balanced.length >= 6) break; }
+    for (const [,arr] of byHost) { balanced.push(...arr.slice(0,2)); if (balanced.length >= 12) break; }
     const keep = new Map();
     for (const h of [...top2, ...balanced]) {
       const key = h.payload?.url || "";
       if (!keep.has(key)) keep.set(key, h);
     }
-    const finalHits = [...keep.values()].slice(0, 6);
+    const finalHits = [...keep.values()].slice(0, 10);
 
     // Build context + link list
-    const MAX_CHARS = 6000;
-    let context = "";
-    const links = [];
+    const MAX_CHARS = 12000;
+    let context = "", links = [];
     for (let i=0;i<finalHits.length;i++){
       const h = finalHits[i];
       const url = h.payload?.url || "";
       const title = h.payload?.title || h.payload?.h1 || "";
-      const txt = (h.payload?.text || "").slice(0, 1200);
+      const txt = (h.payload?.text || "").slice(0, 1400);
       const block = `[${i+1}] ${url}\n${title ? (title + "\n") : ""}${txt}\n---\n`;
       if ((context.length + block.length) > MAX_CHARS) break;
       context += block;
       links.push(url);
     }
 
-    // Summarization prompt (evidence-bound; no hype; show pros/cons as present)
-    const systemContent = `You are a friendly golf buddy who knows course details from the site context.
+    // Summarization prompt (evidence-bound)
+    let systemContent = `You are a friendly golf buddy who knows course details from the site context.
     Your tone should be conversational, like talking golfer-to-golfer, but still accurate and evidence-bound.
 
     Rules:
     - Base everything ONLY on the Site Context. No guessing or outside knowledge.
     - If there are drawbacks, mention them clearly and casually (e.g., "you might want to watch out for...").
     - If info is mixed, mention both sides naturally ("some players liked X, but others noticed Y").
-    - Keep answers short and chatty (2–4 sentences), not formal reports.
+    - Keep answers short and chatty (2–4 sentences) when the user asks a question.
     - Always sprinkle in citations like [n] when you state facts.
     - If nothing relevant is in context, say: "I don’t have that in the site content."
 
     Example style:
-    "Stow Acres has two courses. The South is classic and scenic [1], while the North gets praise for its design but some reviews mention spotty conditions [2]."
+    "Stow Acres has two courses. The South is classic and scenic... for its design but some reviews mention spotty conditions [2]."
 
     # Site Context (cite with [n])
     ${context}`;
 
-    // Use Responses API (SDK-compatible)
+    // Switch to list-output for “best/top/near/under $…”
+    if (isListIntent(lastUser)) {
+      systemContent = `You are a friendly golf buddy who extracts concrete answers from the Site Context.
+      The user asked for recommendations. Produce a clear, scannable LIST, not a generic summary.
+
+      Output rules:
+      - Return a bulleted list of 5–10 courses in the format: • [Course Name](URL) — 1 short reason from the context, with a [n] citation.
+      - Extract names directly from the context (from rankings, "best-of" articles, or course pages). Do NOT invent courses.
+      - Prefer items geographically relevant if the query mentions a place (e.g., "near Boston").
+      - If you only have list pages, parse the list items and present them as bullets.
+      - After the list, include: "Want more options? Try refining by budget or walkability." (no citation needed).
+      - If you cannot find course names in the context, say: "I don’t have that in the site content."
+
+      # Site Context (cite with [n])
+      ${context}`;
+    }
+
+    // LLM
     let reply = "";
     try {
       const completion = await openai.responses.create({
         model: "gpt-4o-mini",
-        input: [
-          { role: "system", content: systemContent },
-          ...messages.filter(m => m.role === "user")
-        ],
-        temperature: 0.1,
-        top_p: 1,
-        max_output_tokens: 450
+        input: [{ role: "system", content: systemContent }, ...messages.filter(m => m.role === "user")],
+        temperature: 0.3,
+        max_output_tokens: 450,
       });
-      reply = (completion?.output_text || "").trim();
+      const parts = completion.output ?? [];
+      reply = parts.map(p => p?.content?.map(c => c.text || "").join("") || "").join("");
+      reply = (reply || "").trim();
+      if (DEBUG_RAG) console.log("LLM reply:", reply.slice(0,200));
     } catch (e) {
       console.warn("OpenAI summarize failed:", e?.message || e);
       reply = "";
@@ -456,7 +405,7 @@ app.post("/api/chat", async (req, res) => {
     if (!reply && !allLinks.length) return res.json({ html: REFUSAL });
 
     const sections = [];
-    if (reply && reply !== REFUSAL) sections.push(reply.replace(/\n/g,"<br/>"));
+    if (reply && reply !== REFUSAL) sections.push(renderReplyHTML(reply));
     else sections.push("Here are relevant pages on our site:");
     if (allLinks.length) {
       const sourcesHtml = allLinks.map(u => "• " + anchor(u)).join("<br/>");
@@ -467,78 +416,77 @@ app.post("/api/chat", async (req, res) => {
     }
 
     return res.json({ html: sections.join("<br/><br/>") });
-
-  } catch (err) {
-    console.error("chat error:", err);
-    return res.status(500).json({ error: String(err) });
+  } catch (e) {
+    console.error("chat error:", e); return res.status(500).json({ error: String(e) });
   }
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Sidecar: related info panel (weather)
+// Sidecar: related info panel (weather) — supports GET and POST
 app.get("/api/sidecar", async (req, res) => {
   try {
-    const q = (req.query.q || "").toString();
-    const loc = extractLocation(q);
-    if (!loc) return res.json({ html: "" });
-
-    const geo = await geocode(loc);
-    if (!geo) return res.json({ html: "" });
-
-    const wx = await fetchWeather(geo.lat, geo.lon);
-    const html = renderWeatherCard(geo, wx);
+    const q = (req.query.q || req.query.text || "").toString();
+    const html = await buildSidecar(q);
     return res.json({ html });
   } catch (e) {
-    console.warn("sidecar error:", e?.message || e);
-    return res.json({ html: "" });
+    console.warn("sidecar error:", e?.message || e); return res.json({ html: "" });
+  }
+});
+app.post("/api/sidecar", async (req, res) => {
+  try {
+    const q = (req.body?.q || req.body?.text || "").toString();
+    const html = await buildSidecar(q);
+    return res.json({ html });
+  } catch (e) {
+    console.warn("sidecar error:", e?.message || e); return res.json({ html: "" });
   }
 });
 
-// --- helpers for side panel ---
-// --- helpers for side panel (REPLACE YOURS WITH THESE) ---
+async function buildSidecar(q) {
+  try {
+    const loc = extractLocation(q || "");
+    if (!loc) return "";
+    const geo = await geocode(loc);
+    if (!geo) return "";
+    const wx = await fetchWeather(geo.lat, geo.lon);
+    return renderWeatherCard(geo, wx);
+  } catch { return ""; }
+}
+
+// Helpers for side panel
 function extractLocation(text = "") {
   const t = text.trim();
 
-  // common “in/near/around …” at any position
+  // “in/near/around …”
   let m = t.match(/\b(?:in|near|around)\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
   if (m) return m[1].replace(/[.,]+$/,'').trim();
 
-  // phrases like “courses in Wayland”, “golf in Stow, MA”
+  // “courses in Wayland”
   m = t.match(/\b(?:courses?|golf|weather)\s+in\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
   if (m) return m[1].replace(/[.,]+$/,'').trim();
 
-  // simple fallback: last 1–3 words, e.g. “tell me weather stow”
+  // simple fallback: last 1–3 words
   const words = t.replace(/[^A-Za-z\s-]/g, " ").trim().split(/\s+/);
   if (words.length <= 3 && words.length > 0) return words.join(" ");
 
-  // final fallback: last “word-ish” chunk
   const tail = t.match(/([A-Za-z][A-Za-z\s-]{1,40})$/);
   return tail ? tail[1].trim() : "";
 }
 
 async function geocode(place) {
-  // More tolerant free endpoint backed by Nominatim
   const url = "https://geocode.maps.co/search?q=" + encodeURIComponent(place) + "&format=json";
   const r = await fetch(url, { headers: { "User-Agent": "totalguide-chat/1.0" } });
   const j = await r.json().catch(() => []);
   if (!Array.isArray(j) || !j.length) return null;
 
-  // If possible, bias toward US/MA results
-  const best =
-    j.find(x => /United States|USA|Massachusetts|MA/i.test(x.display_name)) || j[0];
-
-  return {
-    lat: Number(best.lat),
-    lon: Number(best.lon),
-    name: best.display_name
-  };
+  const best = j.find(x => /United States|USA|Massachusetts|MA/i.test(x.display_name)) || j[0];
+  return { lat: Number(best.lat), lon: Number(best.lon), name: best.display_name };
 }
 
 async function fetchWeather(lat, lon) {
-  const url =
-    "https://api.open-meteo.com/v1/forecast?latitude=" + lat +
-    "&longitude=" + lon +
-    "&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto";
+  const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat +
+              "&longitude=" + lon +
+              "&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto";
   const r = await fetch(url);
   const j = await r.json().catch(() => null);
   return j;
@@ -546,7 +494,6 @@ async function fetchWeather(lat, lon) {
 
 function renderWeatherCard(geo, wx) {
   if (!wx || !wx.current_weather) return "";
-
   const cur = wx.current_weather;
   const d = wx.daily || {};
   const time = d.time || [];
@@ -576,28 +523,29 @@ function renderWeatherCard(geo, wx) {
     '</div>';
 }
 
-// ─────────────────────────── Quiz proxy router (unchanged) ───────────────────
-app.use("/api/chatbot", chatbotRouter);
-
-// Health
+// ──────────────────────────────────────────────────────────────────────────────
+// Health & debug
 app.get("/api/ping", (_, res) => res.json({ ok: true }));
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log("Server listening on", PORT));
-
-// ─────────────────────────── Debug: top site hits ────────────────────────────
 app.get("/api/debug/site-top", async (req, res) => {
   try {
     const EMB = "text-embedding-3-small";
     const q = req.query.q || "wayland";
     const { data } = await openai.embeddings.create({ model: EMB, input: q });
     const vector = data[0].embedding;
-
-    const body = { vector, limit: 10, with_payload: true, with_vectors: false, ...(SITE_VECTOR_NAME ? { using: SITE_VECTOR_NAME } : {}) };
+    const body = { vector, limit: 10, with_payload: true, with_vectors: false,
+                   ...(SITE_VECTOR_NAME ? { using: SITE_VECTOR_NAME } : {}) };
     const results = await qdrant.search(QDRANT_COLL, body);
-    const out = (results || []).map(r => ({ score: r.score, url: r.payload?.url, title: r.payload?.title, preview: (r.payload?.text || "").slice(0,160) }));
+    const out = (results || []).map(r => ({
+      score: r.score, url: r.payload?.url, title: r.payload?.title,
+      preview: (r.payload?.text || "").slice(0,160)
+    }));
     res.json({ q, collection: QDRANT_COLL, using: SITE_VECTOR_NAME || "(default)", out });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => console.log("Server listening on", PORT));
