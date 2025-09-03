@@ -183,7 +183,6 @@ function feedbackUrls() {
 }
 
 // "Examples" chips under questions
-// "Examples" chips under questions
 function buildAnswerChips(options = []) {
   const clean = (s = "") =>
     String(s)
@@ -209,13 +208,26 @@ function buildAnswerChips(options = []) {
   return `<div style="margin-top:4px">
     <span style="font-size:13px;color:#666;margin-right:8px">Examples:</span>
     ${labels.map(lbl => {
-      // Use JSON.stringify to properly escape the string for JavaScript
-      const escaped = JSON.stringify(lbl);
+      // Properly escape for HTML attribute and JavaScript
+      const htmlEscaped = lbl
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+      // For the onclick, we need to escape for JavaScript string
+      const jsEscaped = lbl
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r');
 
       return `<button type="button"
         style="display:inline-block;margin:6px 8px 0 0;padding:6px 10px;border:1px solid #ddd;border-radius:14px;background:#fff;cursor:pointer;font-size:13px"
-        onclick="(function(){var b=document.getElementById('box');if(b){b.value=${escaped};var btn=document.getElementById('btn');if(btn)btn.click();}})()"
-      >${lbl}</button>`;
+        onclick="(function(){var b=document.getElementById('box');if(b){b.value='${jsEscaped}';var btn=document.getElementById('btn');if(btn)btn.click();}})()"
+      >${htmlEscaped}</button>`;
     }).join("")}
   </div>`;
 }
