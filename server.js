@@ -1,4 +1,3 @@
-// server.js — Chat + Quiz + RAG over site_docs
 // Quiz is explicit opt-in ("start" / "start quiz"); cancel exits.
 // RAG is the default for everything else. Robust fallback to QUIZ_BASE_URL.
 
@@ -10,9 +9,9 @@ import { QdrantClient } from "@qdrant/js-client-rest";
 import fetch from "node-fetch";
 import chatbotRouter from "./api/golfChatbotRouter.js";
 
-// ──────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
 // ENV
-const REFUSAL = "I don’t have that in the site content.";
+const REFUSAL = "I don't have that in the site content.";
 const DEBUG_RAG = process.env.DEBUG_RAG === "1";
 
 const OPENAI_API_KEY   = process.env.OPENAI_API_KEY;
@@ -42,7 +41,7 @@ app.set("trust proxy", 1);
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
-// ──────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
 // Helpers
 
 function isListIntent(q) {
@@ -94,51 +93,97 @@ function pickStr(...vals) {
   return "-";
 }
 
-// Small fetch helper: try local router first, then Vercel hyphen/slash forms
+// FIXED fetch helper: properly handles response and error cases
 async function tryFetchJson(urls, init) {
   for (const url of urls) {
     try {
-      const r = await fetch(url, init);
+      console.log(`Trying: ${url}`);
+      const r = await fetch(url, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(init?.headers || {})
+        }
+      });
+
       const text = await r.text();
+
+      // Log for debugging
       if (!r.ok) {
-        console.error("quiz endpoint failed:", r.status, url, text.slice(0, 200));
-        continue;
+        console.error(`Quiz endpoint failed: ${r.status} at ${url}`);
+        if (DEBUG_RAG) console.error(`Response: ${text.slice(0, 500)}`);
+        continue; // Try next URL
       }
-      try { return JSON.parse(text); }
-      catch (e) { console.error("quiz endpoint bad JSON:", url, text.slice(0, 200)); }
+
+      try {
+        const json = JSON.parse(text);
+        console.log(`Success from ${url}`);
+        return json;
+      } catch (e) {
+        console.error(`Quiz endpoint bad JSON from ${url}:`, text.slice(0, 200));
+        continue; // Try next URL
+      }
     } catch (e) {
-      console.error("quiz endpoint exception:", url, e?.message || e);
+      console.error(`Quiz endpoint exception for ${url}:`, e?.message || e);
+      continue; // Try next URL
     }
   }
+
+  console.error("All quiz endpoints failed");
   return null;
 }
+
+// URL generation functions with correct patterns
 function startUrls() {
   const eps = [`${SELF_BASE}/api/chatbot/start`];
   if (QUIZ_BASE_URL) {
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot/start`);
+    // Try both hyphenated and slash patterns
     eps.push(`${QUIZ_BASE_URL}/api/chatbot-start`);
-  }
-  return eps;
-}
-function answerUrls() {
-  const eps = [`${SELF_BASE}/api/chatbot/answer`];
-  if (QUIZ_BASE_URL) {
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot/answer`);
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot-answer`);
-  }
-  return eps;
-}
-function questionUrls(questionId) {
-  const id = encodeURIComponent(questionId);
-  const eps = [`${SELF_BASE}/api/chatbot/question/${id}`];
-  if (QUIZ_BASE_URL) {
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot/question/${id}`);
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot-question?questionId=${id}`);
+    eps.push(`${QUIZ_BASE_URL}/api/chatbot/start`);
   }
   return eps;
 }
 
-// “Examples” chips under questions
+function answerUrls() {
+  const eps = [`${SELF_BASE}/api/chatbot/answer`];
+  if (QUIZ_BASE_URL) {
+    eps.push(`${QUIZ_BASE_URL}/api/chatbot-answer`);
+    eps.push(`${QUIZ_BASE_URL}/api/chatbot/answer`);
+  }
+  return eps;
+}
+
+function questionUrls(questionId) {
+  const id = encodeURIComponent(questionId);
+  const eps = [`${SELF_BASE}/api/chatbot/question/${id}`];
+  if (QUIZ_BASE_URL) {
+    // Vercel pattern uses query parameter
+    eps.push(`${QUIZ_BASE_URL}/api/chatbot-question?questionId=${id}`);
+    eps.push(`${QUIZ_BASE_URL}/api/chatbot/question/${id}`);
+  }
+  return eps;
+}
+
+function finishUrls() {
+  const eps = [`${SELF_BASE}/api/chatbot/finish`];
+  if (QUIZ_BASE_URL) {
+    eps.push(`${QUIZ_BASE_URL}/api/chatbot-finish`);
+    eps.push(`${QUIZ_BASE_URL}/api/chatbot/finish`);
+  }
+  return eps;
+}
+
+function feedbackUrls() {
+  const eps = [`${SELF_BASE}/api/chatbot/feedback`];
+  if (QUIZ_BASE_URL) {
+    eps.push(`${QUIZ_BASE_URL}/api/chatbot-feedback`);
+    eps.push(`${QUIZ_BASE_URL}/api/chatbot/feedback`);
+  }
+  return eps;
+}
+
+// "Examples" chips under questions
+// "Examples" chips under questions
 function buildAnswerChips(options = []) {
   const clean = (s = "") =>
     String(s)
@@ -147,22 +192,29 @@ function buildAnswerChips(options = []) {
       .replace(/\s{2,}/g, " ")
       .trim();
 
-  const seen = new Set(); const labels = [];
+  const seen = new Set();
+  const labels = [];
   for (const o of options) {
     const raw = o?.text ?? o?.option_text ?? "";
-    const lbl = clean(raw); if (!lbl) continue;
-    const key = lbl.toLowerCase(); if (seen.has(key)) continue;
-    seen.add(key); labels.push(lbl); if (labels.length >= 3) break;
+    const lbl = clean(raw);
+    if (!lbl) continue;
+    const key = lbl.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    labels.push(lbl);
+    if (labels.length >= 3) break;
   }
   if (!labels.length) return "";
 
   return `<div style="margin-top:4px">
     <span style="font-size:13px;color:#666;margin-right:8px">Examples:</span>
     ${labels.map(lbl => {
-      const v = lbl.replace(/'/g, "\\'");
+      // Use JSON.stringify to properly escape the string for JavaScript
+      const escaped = JSON.stringify(lbl);
+
       return `<button type="button"
         style="display:inline-block;margin:6px 8px 0 0;padding:6px 10px;border:1px solid #ddd;border-radius:14px;background:#fff;cursor:pointer;font-size:13px"
-        onclick="(function(){var b=document.getElementById('box');b.value='${v}';document.getElementById('btn').click();})()"
+        onclick="(function(){var b=document.getElementById('box');if(b){b.value=${escaped};var btn=document.getElementById('btn');if(btn)btn.click();}})()"
       >${lbl}</button>`;
     }).join("")}
   </div>`;
@@ -190,14 +242,14 @@ function renderReplyHTML(text = "") {
   return html.join("");
 }
 
-// QUIZ — conversational question (no numbered options; show chips)
+// QUIZ – conversational question (no numbered options; show chips)
 function renderQuestionHTML(q) {
   const headline = (q.conversational_text || q.text || "").trim();
   const chips = buildAnswerChips(q.options || []);
   return `<div style="font-size:16px;margin:0 0 10px">${headline}</div>${chips}`;
 }
 
-// QUIZ — final profile (left)
+// QUIZ – final profile (left)
 function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   const rec   = profile.recommendations || {};
 
@@ -234,7 +286,7 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
     lines.push(`\nMatched Courses`);
     courses.slice(0,6).forEach(c => {
       const name = pickStr(c.name, c.title, c.payload?.course_name, "Course");
-      const score = (typeof c.score === "number") ? ` — ${c.score.toFixed(3)}` : "";
+      const score = (typeof c.score === "number") ? ` – ${c.score.toFixed(3)}` : "";
       lines.push(`• ${name}${score}`);
     });
   }
@@ -257,7 +309,7 @@ function renderProfileSideCard(profile = {}, scores = {}) {
     ? matches.map((m) => {
         const name  = pickStr(m.name, m.title, m.payload?.course_name, "Course");
         const href  = m.url || m.link || m.payload?.website || m.payload?.course_url || "";
-        const score = (typeof m.score === "number") ? ` — ${m.score.toFixed(3)}` : "";
+        const score = (typeof m.score === "number") ? ` – ${m.score.toFixed(3)}` : "";
         return href
           ? `• <a href="${href.replace(/"/g,"%22")}" target="_blank" rel="noreferrer">${name}</a>${score}`
           : `• ${name}${score}`;
@@ -279,20 +331,18 @@ function renderProfileSideCard(profile = {}, scores = {}) {
   `;
 }
 
-
-
 // Rephrase question (only if API didn't provide conversational_text)
 async function rephraseQuestionLLM(q) {
   try {
     const opts = (q.options || []).map(o => o.text || o.option_text).filter(Boolean).slice(0, 8);
     const sys = `You are a friendly golf buddy. Rephrase the question as ONE short, natural line. Do NOT list options or numbers.`;
     const user = `Question: "${q.text || q.question_text || ""}"\nOptions (do not show): ${opts.join(" | ")}`;
-    const r = await openai.responses.create({
+    const r = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      input: [{ role: "system", content: sys }, { role: "user", content: user }],
-      temperature: 0.4, max_output_tokens: 60
+      messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+      temperature: 0.4, max_tokens: 60
     });
-    return (r.output_text || "").trim() || q.text || q.question_text || "";
+    return (r.choices[0]?.message?.content || "").trim() || q.text || q.question_text || "";
   } catch { return q.text || q.question_text || ""; }
 }
 
@@ -308,12 +358,12 @@ async function classifyFreeTextToIndexLLM(q, freeText) {
     if (n && options.some(o => o.index === Number(n[0]))) return Number(n[0]);
     const sys = `Map the golfer's free-text reply to ONE option index. Return STRICT JSON: {"optionIndex": <number>}.`;
     const user = `Options:\n${options.map(o => `${o.index}: ${o.text}`).join("\n")}\nUser reply: ${freeText}`;
-    const r = await openai.responses.create({
+    const r = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      input: [{ role: "system", content: sys }, { role: "user", content: user }],
-      temperature: 0.1, max_output_tokens: 40
+      messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+      temperature: 0.1, max_tokens: 40
     });
-    const out = (r.output_text || "").trim();
+    const out = (r.choices[0]?.message?.content || "").trim();
     const m = out.match(/"optionIndex"\s*:\s*(\d+)/i);
     if (m) {
       const idx = Number(m[1]);
@@ -376,75 +426,151 @@ async function retrieveSite(question, topK = 120) {
 }
 function isCourseURL(h) { return ((h?.payload?.url || "").toLowerCase()).includes("/courses/"); }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimal UI (for local testing)
+// ──────────────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
-<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>OpenAI Chatbot</title>
-<style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;background:#fafafa;color:#222;margin:0}
-.container{display:grid;grid-template-columns:2fr 1fr;gap:24px;max-width:1200px;margin:24px auto;padding:0 16px}
-.card{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
-h1{font-size:20px;margin:0 0 8px} .muted{color:#777} .row{display:flex;gap:8px}
-input,textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px}
-button{padding:10px 14px;border-radius:10px;border:1px solid #0a7;cursor:pointer}
-.msg{padding:10px 12px;border-radius:10px;margin:8px 0}
-.me{background:#e9f7ff} .bot{background:#f7f7f7} pre{white-space:pre-wrap}
-</style></head>
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenAI Chatbot</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #fafafa;
+            color: #222;
+            margin: 0;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+            max-width: 1200px;
+            margin: 24px auto;
+            padding: 0 16px;
+        }
+        .card {
+            background: #fff;
+            border: 1px solid #e5e5e5;
+            border-radius: 12px;
+            padding: 16px;
+        }
+        .row {
+            display: flex;
+            gap: 8px;
+        }
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+        }
+        button {
+            padding: 10px 14px;
+            border-radius: 10px;
+            border: 1px solid #0a7;
+            cursor: pointer;
+        }
+        .msg {
+            padding: 10px 12px;
+            border-radius: 10px;
+            margin: 8px 0;
+        }
+        .me {
+            background: #e9f7ff;
+        }
+        .bot {
+            background: #f7f7f7;
+        }
+        .muted {
+            color: #777;
+        }
+    </style>
+</head>
 <body>
-<div class="container">
-  <div class="card">
-    <h1>OpenAI Chatbot</h1>
-    <div class="muted">Try: <code>best courses near boston</code> or <code>start</code> for quiz</div>
-    <div id="log"></div>
-    <div class="row">
-      <textarea id="box" rows="2" placeholder="Type a message…"></textarea>
-      <button id="btn">Send</button>
+    <div class="container">
+        <div class="card">
+            <h1>OpenAI Chatbot</h1>
+            <div class="muted">Try: best courses near boston or start for quiz</div>
+            <div id="log"></div>
+            <div class="row">
+                <textarea id="box" rows="2" placeholder="Type a message"></textarea>
+                <button id="btn">Send</button>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Related</h2>
+            <div id="side" class="muted">No related info.</div>
+        </div>
     </div>
-  </div>
-  <div class="card">
-    <h2>Related</h2>
-    <div id="side" class="muted">No related info.</div>
-  </div>
-</div>
-<script>
-const log=document.getElementById('log'),box=document.getElementById('box'),btn=document.getElementById('btn'),side=document.getElementById('side');
-function render(html,isMe){const d=document.createElement('div');d.className='msg '+(isMe?'me':'bot');d.innerHTML=html;log.appendChild(d);log.scrollTop=log.scrollHeight;}
-async function sendMessage(){
-  const text=box.value.trim(); if(!text) return;
-  render('<strong>You:</strong><br/>'+text,true); box.value='';
-  let j=null;
-  try{
-    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:text}]})});
-    j=await r.json(); render(j.html||'I don’t have that in the site content.',false);
-  }catch(e){ render('Error: '+(e.message||e),false); }
+    <script>
+        const log = document.getElementById("log");
+        const box = document.getElementById("box");
+        const btn = document.getElementById("btn");
+        const side = document.getElementById("side");
 
-  // Right panel policy:
-  // - If server sends sideHtml → show it (quiz completion)
-  // - Else if server says suppressSidecar → do nothing
-  // - Else → show weather sidecar
-  if (j && typeof j.sideHtml === "string" && j.sideHtml.length) {
-    side.innerHTML = j.sideHtml;
-  } else if (!(j && j.suppressSidecar)) {
-    try {
-      const r2 = await fetch('/api/sidecar?q='+encodeURIComponent(text));
-      const p = await r2.json();
-      side.innerHTML = p.html || '<div class="card">No related info.</div>';
-    } catch(e) {
-      side.innerHTML = '<div class="card">No related info.</div>';
-    }
-  }
-}
-btn.addEventListener('click',sendMessage);
-box.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMessage(); }});
-window.addEventListener('load',()=>box.focus());
-</script>
-</body></html>`);
+        function render(html, isMe) {
+            const d = document.createElement("div");
+            d.className = "msg " + (isMe ? "me" : "bot");
+            d.innerHTML = html;
+            log.appendChild(d);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const text = box.value.trim();
+            if (!text) return;
+
+            render("<strong>You:</strong><br>" + text, true);
+            box.value = "";
+
+            let j = null;
+            try {
+                const r = await fetch("/api/chat", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({messages: [{role: "user", content: text}]})
+                });
+                j = await r.json();
+                const defaultMsg = "I do not have that in the site content.";
+                render(j.html || defaultMsg, false);
+            } catch(e) {
+                render("Error: " + (e.message || e), false);
+            }
+
+            if (j && typeof j.sideHtml === "string" && j.sideHtml.length) {
+                side.innerHTML = j.sideHtml;
+            } else if (!j || !j.suppressSidecar) {
+                try {
+                    const r2 = await fetch("/api/sidecar?q=" + encodeURIComponent(text));
+                    const p = await r2.json();
+                    const defaultSide = "<div class=\\"card\\">No related info.</div>";
+                    side.innerHTML = p.html || defaultSide;
+                } catch(e) {
+                    side.innerHTML = "<div class=\\"card\\">No related info.</div>";
+                }
+            }
+        }
+
+        btn.addEventListener("click", sendMessage);
+        box.addEventListener("keydown", function(e) {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        window.addEventListener("load", function() {
+            box.focus();
+        });
+    </script>
+</body>
+</html>`;
+
+  res.send(html);
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
 // Sessions + proxy router (to your remote quiz app)
 const SESS = new Map();
 function getSid(req, res) {
@@ -457,8 +583,7 @@ function getSid(req, res) {
 }
 app.use("/api/chatbot", chatbotRouter);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Chat endpoint (quiz is explicit opt-in; RAG is default)
+// ──────────────────────────────────────────────────────────────────────────
 // Chat endpoint (quiz is explicit opt-in; RAG is default)
 app.post("/api/chat", async (req, res) => {
   try {
@@ -472,7 +597,7 @@ app.post("/api/chat", async (req, res) => {
     // cancel/exit quiz
     if (/^\s*(cancel|stop|exit|end)\s*(quiz)?\s*$/i.test(lastUser)) {
       SESS.set(sid, newChatState());
-      return res.json({ html: "Got it — I’ve exited the quiz. Ask anything or type “start” to begin again." });
+      return res.json({ html: "Got it – I've exited the quiz. Ask anything or type 'start' to begin again." });
     }
 
     // ── RAG BY DEFAULT: if we're NOT in quiz mode and it's NOT an explicit start, do search and return
@@ -552,7 +677,7 @@ app.post("/api/chat", async (req, res) => {
       if (isListIntent(lastUser)) {
         systemContent = `You are a friendly golf buddy. The user wants a LIST of course recommendations.
         - Use ONLY items in the Site Context; prefer course pages over articles.
-        - Bullet 5–10 courses: • [Course Name](URL) — 1 short reason [n]
+        - Bullet 5–10 courses: • [Course Name](URL) – 1 short reason [n]
         - If fewer than 5, show what you have.
         # Site Context
         ${context}`;
@@ -561,13 +686,12 @@ app.post("/api/chat", async (req, res) => {
       // LLM
       let reply = "";
       try {
-        const completion = await openai.responses.create({
+        const completion = await openai.chat.completions.create({
           model: "gpt-4o-mini",
-          input: [{ role: "system", content: systemContent }, ...messages.filter(m => m.role === "user")],
-          temperature: 0.3, max_output_tokens: 450,
+          messages: [{ role: "system", content: systemContent }, ...messages.filter(m => m.role === "user")],
+          temperature: 0.3, max_tokens: 450,
         });
-        const parts = completion.output ?? [];
-        reply = parts.map(p => p?.content?.map(c => c.text || "").join("") || "").join("");
+        reply = completion.choices[0]?.message?.content || "";
         reply = (reply || "").trim();
       } catch (e) { console.warn("OpenAI summarize failed:", e?.message || e); reply = ""; }
 
@@ -589,22 +713,28 @@ app.post("/api/chat", async (req, res) => {
 
     // ── QUIZ: start (only if explicitly asked)
     if (isStartCmd) {
-      const data = await tryFetchJson(
-        [
-          `${SELF_BASE}/api/chatbot/start`,
-          ...(process.env.QUIZ_BASE_URL ? [
-            `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot/start`,
-            `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot-start`
-          ] : [])
-        ],
-        { method:"POST", headers:{ "Content-Type":"application/json" }, body:"{}" }
-      );
+      const urls = startUrls();
+      console.log("Starting quiz with URLs:", urls);
 
-      if (!data || !data.sessionId || !data.question) {
-        SESS.set(sid, newChatState()); // reset if start failed
-        console.error("Quiz start failed or bad payload:", data);
-        // note: DO NOT fall through to quiz; user didn't get one, so just reply with a gentle message
-        return res.json({ html:"The quiz didn’t start. Ask a question about courses, or try “start” again later." });
+      const data = await tryFetchJson(urls, {
+        method: "POST",
+        body: JSON.stringify({}) // Empty body for start
+      });
+
+      if (!data) {
+        SESS.set(sid, newChatState());
+        console.error("Quiz start failed - no data returned");
+        return res.json({
+          html: "Sorry, I couldn't start the quiz right now. Please try again or ask me about golf courses directly."
+        });
+      }
+
+      if (!data.sessionId || !data.question) {
+        SESS.set(sid, newChatState());
+        console.error("Quiz start returned invalid data:", data);
+        return res.json({
+          html: "The quiz didn't start properly. Try again or ask me about specific golf courses."
+        });
       }
 
       state.mode = "quiz";
@@ -616,16 +746,8 @@ app.post("/api/chat", async (req, res) => {
 
       // ensure options for chips
       if (!Array.isArray(state.question.options) || !state.question.options.length) {
-        const qd = await tryFetchJson(
-          [
-            `${SELF_BASE}/api/chatbot/question/${encodeURIComponent(state.question.id)}`,
-            ...(process.env.QUIZ_BASE_URL ? [
-              `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot/question/${encodeURIComponent(state.question.id)}`,
-              `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot-question?questionId=${encodeURIComponent(state.question.id)}`
-            ] : [])
-          ],
-          { method: "GET" }
-        );
+        const urls = questionUrls(state.question.id);
+        const qd = await tryFetchJson(urls, { method: "GET" });
         if (qd && qd.options) state.question.options = qd.options;
       }
       if (!state.question.conversational_text) {
@@ -639,26 +761,19 @@ app.post("/api/chat", async (req, res) => {
     const pickOnly = lastUser.match(/^(?:pick|answer|option)?\s*(\d+)\s*$/i);
     if (pickOnly && state.mode === "quiz" && state.sessionId && state.question?.id) {
       const idx = Number(pickOnly[1]);
-      const data = await tryFetchJson(
-        [
-          `${SELF_BASE}/api/chatbot/answer`,
-          ...(process.env.QUIZ_BASE_URL ? [
-            `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot/answer`,
-            `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot-answer`
-          ] : [])
-        ],
-        { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId:      state.sessionId,
-            questionId:     state.question.id,
-            optionIndex:    idx,
-            currentAnswers: state.answers,
-            currentScores:  state.scores
-          })
-        }
-      );
+      const urls = answerUrls();
+      const data = await tryFetchJson(urls, {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId:      state.sessionId,
+          questionId:     state.question.id,
+          optionIndex:    idx,
+          currentAnswers: state.answers,
+          currentScores:  state.scores
+        })
+      });
 
-      if (!data) return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start' again." });
+      if (!data) return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
 
       if (data.complete) {
         state.mode = null; state.question = null; SESS.set(sid, state);
@@ -676,49 +791,34 @@ app.post("/api/chat", async (req, res) => {
         SESS.set(sid, state);
         return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
       }
-      return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start' again." });
+      return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
     }
 
     // ── QUIZ: free-text → classify → full payload (only in quiz mode)
     if (state.mode === "quiz" && state.sessionId && state.question?.id) {
       if (!Array.isArray(state.question.options) || !state.question.options.length) {
-        const qd = await tryFetchJson(
-          [
-            `${SELF_BASE}/api/chatbot/question/${encodeURIComponent(state.question.id)}`,
-            ...(process.env.QUIZ_BASE_URL ? [
-              `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot/question/${encodeURIComponent(state.question.id)}`,
-              `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot-question?questionId=${encodeURIComponent(state.question.id)}`
-            ] : [])
-          ],
-          { method: "GET" }
-        );
+        const urls = questionUrls(state.question.id);
+        const qd = await tryFetchJson(urls, { method: "GET" });
         if (qd && qd.options) state.question.options = qd.options;
       }
       const idx = await classifyFreeTextToIndexLLM(state.question, lastUser);
       if (Number.isNaN(idx)) {
-        return res.json({ html: `Hmm, I didn’t catch that — try a phrase like "well-maintained", or type "pick 1".` });
+        return res.json({ html: `Hmm, I didn't catch that – try a phrase like "well-maintained", or type "pick 1".` });
       }
 
-      const data = await tryFetchJson(
-        [
-          `${SELF_BASE}/api/chatbot/answer`,
-          ...(process.env.QUIZ_BASE_URL ? [
-            `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot/answer`,
-            `${process.env.QUIZ_BASE_URL.replace(/\/+$/,"")}/api/chatbot-answer`
-          ] : [])
-        ],
-        { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId:      state.sessionId,
-            questionId:     state.question.id,
-            optionIndex:    idx,
-            currentAnswers: state.answers,
-            currentScores:  state.scores
-          })
-        }
-      );
+      const urls = answerUrls();
+      const data = await tryFetchJson(urls, {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId:      state.sessionId,
+          questionId:     state.question.id,
+          optionIndex:    idx,
+          currentAnswers: state.answers,
+          currentScores:  state.scores
+        })
+      });
 
-      if (!data) return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start' again." });
+      if (!data) return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
 
       if (data.complete) {
         state.mode = null; state.question = null; SESS.set(sid, state);
@@ -736,11 +836,11 @@ app.post("/api/chat", async (req, res) => {
         SESS.set(sid, state);
         return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
       }
-      return res.json({ html:"Thanks! I couldn’t fetch the next question; try 'start' again." });
+      return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
     }
 
-    // If we got here, we weren’t in quiz mode and it wasn’t "start" → just do RAG next time
-    return res.json({ html: "Tell me what you’re looking for — try “courses in Wayland” or type “start” to begin the quiz." });
+    // If we got here, we weren't in quiz mode and it wasn't "start" → just do RAG next time
+    return res.json({ html: "Tell me what you're looking for – try \"courses in Wayland\" or type \"start\" to begin the quiz." });
 
   } catch (e) {
     console.error("chat error:", e);
@@ -748,7 +848,7 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
 // Sidecar GET/POST
 app.get("/api/sidecar", async (req, res) => {
   try {
@@ -779,9 +879,8 @@ async function buildSidecar(q) {
   } catch { return ""; }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
 // Health & debug
-app.use("/api/chatbot", chatbotRouter); // keep proxy router
 app.get("/api/ping", (_, res) => res.json({ ok: true }));
 app.get("/api/debug/site-top", async (req, res) => {
   try {
