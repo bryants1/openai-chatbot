@@ -781,65 +781,60 @@ app.post("/api/chat", async (req, res) => {
     }
 
     // ── QUIZ: start (only if explicitly asked)
-      if (isStartCmd) {
-        const urls = startUrls();
-        const data = await tryFetchJson(urls, { method: "POST", body: JSON.stringify({}) });
+    if (isStartCmd) {
+      const urls = startUrls();
+      const data = await tryFetchJson(urls, { method: "POST", body: JSON.stringify({}) });
 
-        if (data?.needsLocation) {
-          state.mode = "quiz";
-          state.sessionId = data.sessionId;
-          state.needsLocation = true;
-          SESS.set(sid, state);
+      if (!data) {
+        SESS.set(sid, newChatState());
+        console.error("Quiz start failed - no data returned");
+        return res.json({
+          html: "Sorry, I couldn't start the quiz right now. Please try again or ask me about golf courses directly."
+        });
+      }
 
-          return res.json({
-            html: `
-              <div style="font-size:16px;margin:0 0 10px">Where are you looking for golf courses?</div>
-              <div style="margin:10px 0">
-                <input type="text" id="zipcode" placeholder="Enter ZIP code (e.g., 02134)"
-                       style="padding:8px;border:1px solid #ddd;border-radius:6px;width:150px;margin-right:8px">
-                <select id="radius" style="padding:8px;border:1px solid #ddd;border-radius:6px">
-                  <option value="10">Within 10 miles</option>
-                  <option value="25" selected>Within 25 miles</option>
-                  <option value="50">Within 50 miles</option>
-                  <option value="100">Within 100 miles</option>
-                  <option value="9999">Anywhere</option>
-                </select>
-                <button onclick="(function(){
-                  var zip = document.getElementById('zipcode').value;
-                  var radius = document.getElementById('radius').value;
-                  var box = document.getElementById('box');
-                  if(box) {
-                    box.value = 'LOCATION:' + zip + ':' + radius;
-                    document.getElementById('btn').click();
-                  }
-                })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">
-                  Start Quiz
-                </button>
-              </div>
-              <div style="margin-top:8px;font-size:12px;color:#666">
-                Leave ZIP blank to see courses everywhere
-              </div>
-            `,
-            suppressSidecar: true
-          });
-        }
+      // Handle location collection flow
+      if (data.needsLocation) {
+        state.mode = "quiz";
+        state.sessionId = data.sessionId;
+        state.needsLocation = true;
+        SESS.set(sid, state);
 
-        if (!data) {
-          SESS.set(sid, newChatState());
-          console.error("Quiz start failed - no data returned");
-          return res.json({
-            html: "Sorry, I couldn't start the quiz right now. Please try again or ask me about golf courses directly."
-          });
-        }
+        return res.json({
+          html: `
+            <div style="font-size:16px;margin:0 0 10px">Where are you looking for golf courses?</div>
+            <div style="margin:10px 0">
+              <input type="text" id="zipcode" placeholder="Enter ZIP code (e.g., 02134)"
+                     style="padding:8px;border:1px solid #ddd;border-radius:6px;width:150px;margin-right:8px">
+              <select id="radius" style="padding:8px;border:1px solid #ddd;border-radius:6px">
+                <option value="10">Within 10 miles</option>
+                <option value="25" selected>Within 25 miles</option>
+                <option value="50">Within 50 miles</option>
+                <option value="100">Within 100 miles</option>
+                <option value="9999">Anywhere</option>
+              </select>
+              <button onclick="(function(){
+                var zip = document.getElementById('zipcode').value;
+                var radius = document.getElementById('radius').value;
+                var box = document.getElementById('box');
+                if(box) {
+                  box.value = 'LOCATION:' + zip + ':' + radius;
+                  document.getElementById('btn').click();
+                }
+              })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">
+                Start Quiz
+              </button>
+            </div>
+            <div style="margin-top:8px;font-size:12px;color:#666">
+              Leave ZIP blank to see courses everywhere
+            </div>
+          `,
+          suppressSidecar: true
+        });
+      }
 
-        if (!data.sessionId || !data.question) {
-          SESS.set(sid, newChatState());
-          console.error("Quiz start returned invalid data:", data);
-          return res.json({
-            html: "The quiz didn't start properly. Try again or ask me about specific golf courses."
-          });
-        }
-
+      // If we have a question (old flow without location), handle it
+      if (data.question) {
         state.mode = "quiz";
         state.sessionId = data.sessionId;
         state.question  = data.question || null;
@@ -865,85 +860,89 @@ app.post("/api/chat", async (req, res) => {
         SESS.set(sid, state);
         return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
       }
+    }
 
-      // ── QUIZ: Handle location submission
-      if (state.mode === "quiz" && state.needsLocation && lastUser.startsWith("LOCATION:")) {
-        const parts = lastUser.split(":");
-        const zipCode = parts[1]?.trim() || "";
-        const radius = parseInt(parts[2]) || 25;
+    // ── QUIZ: Handle location submission (separate from start command)
+    if (state.mode === "quiz" && state.needsLocation && lastUser.startsWith("LOCATION:")) {
+      const parts = lastUser.split(":");
+      const zipCode = parts[1]?.trim() || "";
+      const radius = parseInt(parts[2]) || 25;
 
-        let locationData = {
-          zipCode,
-          radius,
-          coords: null
-        };
+      let locationData = {
+        zipCode,
+        radius,
+        coords: null
+      };
 
-        // Geocode ZIP if provided
-        if (zipCode) {
-          try {
-            const geoResponse = await fetch(`https://api.zippopotam.us/us/${zipCode}`);
+      // Geocode ZIP if provided
+      if (zipCode) {
+        try {
+          const geoResponse = await fetch(`https://api.zippopotam.us/us/${zipCode}`);
 
-            if (geoResponse.ok) {
-              const geoData = await geoResponse.json();
-              locationData.coords = {
-                lat: parseFloat(geoData.lat),
-                lon: parseFloat(geoData.lng)
-              };
-              locationData.city = geoData.places[0]?.['place name'];
-              locationData.state = geoData.places[0]?.['state abbreviation'];
+          if (geoResponse.ok) {
+            const geoData = await geoResponse.json();
+            locationData.coords = {
+              lat: parseFloat(geoData.lat),
+              lon: parseFloat(geoData.lng)
+            };
+            locationData.city = geoData.places[0]?.['place name'];
+            locationData.state = geoData.places[0]?.['state abbreviation'];
 
-              console.log(`Geocoded ${zipCode} to:`, locationData.coords);
-            } else {
-              console.log(`Failed to geocode ZIP: ${zipCode}`);
-            }
-          } catch (e) {
-            console.error("Geocoding error:", e);
+            console.log(`Geocoded ${zipCode} to:`, locationData.coords);
+          } else {
+            console.log(`Failed to geocode ZIP: ${zipCode}`);
           }
+        } catch (e) {
+          console.error("Geocoding error:", e);
         }
-
-        state.location = locationData;
-        state.needsLocation = false;
-
-        // Get first real question with location context
-        const urls = [`${QUIZ_BASE_URL}/api/chatbot-first-question`];
-        const data = await tryFetchJson(urls, {
-          method: "POST",
-          body: JSON.stringify({
-            sessionId: state.sessionId,
-            location: state.location
-          })
-        });
-
-        if (!data || !data.question) {
-          SESS.set(sid, newChatState());
-          return res.json({
-            html: "Sorry, I couldn't start the quiz. Please try again."
-          });
-        }
-
-        state.question = data.question;
-        state.answers = {};
-        state.scores = {};
-
-        // ensure options for chips
-        if (!Array.isArray(state.question.options) || !state.question.options.length) {
-          const urls = questionUrls(state.question.id);
-          const qd = await tryFetchJson(urls, { method: "GET" });
-          if (qd && qd.options) state.question.options = qd.options;
-        }
-
-        // Always use conversational_text if available, otherwise rephrase
-        if (!state.question.conversational_text) {
-          console.log("No conversational_text, rephrasing question");
-          state.question.conversational_text = await rephraseQuestionLLM(state.question);
-        } else {
-          console.log("Using provided conversational_text");
-        }
-
-        SESS.set(sid, state);
-        return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
       }
 
+      state.location = locationData;
+      state.needsLocation = false;
+
+      // Get first real question with location context
+      const urls = [`${SELF_BASE}/api/chatbot-first-question`];
+      if (QUIZ_BASE_URL) {
+        urls.push(`${QUIZ_BASE_URL}/api/chatbot-first-question`);
+      }
+
+      const data = await tryFetchJson(urls, {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: state.sessionId,
+          location: state.location
+        })
+      });
+
+      if (!data || !data.question) {
+        SESS.set(sid, newChatState());
+        return res.json({
+          html: "Sorry, I couldn't start the quiz. Please try again."
+        });
+      }
+
+      state.question = data.question;
+      state.answers = {};
+      state.scores = {};
+
+      // ensure options for chips
+      if (!Array.isArray(state.question.options) || !state.question.options.length) {
+        const urls = questionUrls(state.question.id);
+        const qd = await tryFetchJson(urls, { method: "GET" });
+        if (qd && qd.options) state.question.options = qd.options;
+      }
+
+      // Always use conversational_text if available, otherwise rephrase
+      if (!state.question.conversational_text) {
+        console.log("No conversational_text, rephrasing question");
+        state.question.conversational_text = await rephraseQuestionLLM(state.question);
+      } else {
+        console.log("Using provided conversational_text");
+      }
+
+      SESS.set(sid, state);
+      return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
+    }
       // ── QUIZ: numeric pick (only in quiz mode)
       const pickOnly = lastUser.match(/^(?:pick|answer|option)?\s*(\d+)\s*$/i);
       if (pickOnly && state.mode === "quiz" && state.sessionId && state.question?.id) {
@@ -990,7 +989,7 @@ app.post("/api/chat", async (req, res) => {
         }
         return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
       }
-      
+
     // ── QUIZ: free-text → classify → full payload (only in quiz mode)
     if (state.mode === "quiz" && state.sessionId && state.question?.id) {
       console.log(`Processing free text answer: "${lastUser}"`);
