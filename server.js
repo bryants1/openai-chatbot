@@ -363,36 +363,86 @@ async function classifyFreeTextToIndexLLM(q, freeText) {
   try {
     const options = (q.options || []).map((o, i) => ({
       index: (o.index ?? o.option_index ?? i),
-      text:  (o.text  ?? o.option_text  ?? "")
+      text: (o.text ?? o.option_text ?? "").toLowerCase().trim(),
+      emoji: o.emoji || ""
     }));
-    // If user typed a number that matches an index, use it
-    const n = String(freeText).match(/\d+/);
-    if (n && options.some(o => o.index === Number(n[0]))) return Number(n[0]);
-    const sys = `Map the golfer's free-text reply to ONE option index. Return STRICT JSON: {"optionIndex": <number>}.`;
-    const user = `Options:\n${options.map(o => `${o.index}: ${o.text}`).join("\n")}\nUser reply: ${freeText}`;
+
+    // Clean the user's input
+    const userInput = freeText.toLowerCase().trim();
+
+    // Direct number match
+    const numberMatch = userInput.match(/^\d+$/);
+    if (numberMatch && options.some(o => o.index === Number(numberMatch[0]))) {
+      console.log(`Direct number match: ${numberMatch[0]}`);
+      return Number(numberMatch[0]);
+    }
+
+    // Check for exact or close text matches first
+    for (const opt of options) {
+      // Remove emoji and clean the option text
+      const cleanOption = opt.text.replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\u200D]+/gu, "").trim();
+
+      // Exact match
+      if (userInput === cleanOption) {
+        console.log(`Exact match found: option ${opt.index}`);
+        return opt.index;
+      }
+
+      // Check if user input contains most of the option text
+      if (cleanOption && userInput.includes(cleanOption)) {
+        console.log(`Partial match found: option ${opt.index}`);
+        return opt.index;
+      }
+
+      // Check if option contains the user input (for abbreviated responses)
+      if (cleanOption && cleanOption.includes(userInput) && userInput.length > 3) {
+        console.log(`Abbreviated match found: option ${opt.index}`);
+        return opt.index;
+      }
+    }
+
+    // Use GPT for classification
+    const sys = `You are classifying a golfer's response to a multiple choice question.
+Match their response to the BEST fitting option index.
+Return ONLY a JSON object: {"optionIndex": <number>}`;
+
+    const user = `Question: ${q.conversational_text || q.text || q.question_text || ""}
+Options:
+${options.map(o => `${o.index}: ${o.text}`).join("\n")}
+
+User's response: "${freeText}"
+
+Which option index best matches their response?`;
+
     const r = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [{ role: "system", content: sys }, { role: "user", content: user }],
-      temperature: 0.1, max_tokens: 40
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: user }
+      ],
+      temperature: 0.1,
+      max_tokens: 40
     });
+
     const out = (r.choices[0]?.message?.content || "").trim();
+    console.log(`GPT classification response: ${out}`);
+
     const m = out.match(/"optionIndex"\s*:\s*(\d+)/i);
     if (m) {
       const idx = Number(m[1]);
-      if (options.some(o => o.index === idx)) return idx;
+      if (options.some(o => o.index === idx)) {
+        console.log(`GPT matched to option ${idx}`);
+        return idx;
+      }
     }
-    // crude overlap fallback
-    const t = freeText.toLowerCase();
-    let best = options[0]?.index, bestScore = -1;
-    for (const o of options) {
-      const words = (o.text || "").toLowerCase().split(/\W+/).filter(w => w.length > 3);
-      const score = words.reduce((acc,w)=>acc + (t.includes(w) ? 1 : 0), 0);
-      if (score > bestScore) { bestScore = score; best = o.index; }
-    }
-    return best;
-  } catch {
-    const n = String(freeText).match(/\d+/);
-    return n ? Number(n[0]) : NaN;
+
+    // Fallback: pick first option
+    console.log(`Classification failed, defaulting to first option`);
+    return options[0]?.index ?? 0;
+
+  } catch (error) {
+    console.error("Classification error:", error);
+    return 0;
   }
 }
 
@@ -597,6 +647,7 @@ app.use("/api/chatbot", chatbotRouter);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Chat endpoint (quiz is explicit opt-in; RAG is default)
+// Chat endpoint (quiz is explicit opt-in; RAG is default)
 app.post("/api/chat", async (req, res) => {
   try {
     const sid = getSid(req, res);
@@ -730,7 +781,7 @@ app.post("/api/chat", async (req, res) => {
 
       const data = await tryFetchJson(urls, {
         method: "POST",
-        body: JSON.stringify({}) // Empty body for start
+        body: JSON.stringify({})
       });
 
       if (!data) {
@@ -762,9 +813,15 @@ app.post("/api/chat", async (req, res) => {
         const qd = await tryFetchJson(urls, { method: "GET" });
         if (qd && qd.options) state.question.options = qd.options;
       }
+
+      // Always use conversational_text if available, otherwise rephrase
       if (!state.question.conversational_text) {
+        console.log("No conversational_text, rephrasing question");
         state.question.conversational_text = await rephraseQuestionLLM(state.question);
+      } else {
+        console.log("Using provided conversational_text");
       }
+
       SESS.set(sid, state);
       return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
     }
@@ -773,6 +830,8 @@ app.post("/api/chat", async (req, res) => {
     const pickOnly = lastUser.match(/^(?:pick|answer|option)?\s*(\d+)\s*$/i);
     if (pickOnly && state.mode === "quiz" && state.sessionId && state.question?.id) {
       const idx = Number(pickOnly[1]);
+      console.log(`Numeric answer selected: ${idx}`);
+
       const urls = answerUrls();
       const data = await tryFetchJson(urls, {
         method: "POST",
@@ -791,15 +850,22 @@ app.post("/api/chat", async (req, res) => {
         state.mode = null; state.question = null; SESS.set(sid, state);
         const html = renderFinalProfileHTML(data.profile, data.scores, data.totalQuestions).replace(/\n/g,"<br/>");
         const sideHtml = renderProfileSideCard(data.profile, data.scores);
-        return res.json({ html, sideHtml }); // no suppressSidecar so client shows sideHtml
+        return res.json({ html, sideHtml });
       }
+
       if (data.question) {
         state.answers = data.currentAnswers || state.answers;
         state.scores  = data.currentScores  || state.scores;
         state.question = data.question;
+
+        // Always use conversational_text if available
         if (!state.question.conversational_text) {
+          console.log("No conversational_text for next question, rephrasing");
           state.question.conversational_text = await rephraseQuestionLLM(state.question);
+        } else {
+          console.log("Using provided conversational_text for next question");
         }
+
         SESS.set(sid, state);
         return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
       }
@@ -808,12 +874,21 @@ app.post("/api/chat", async (req, res) => {
 
     // ── QUIZ: free-text → classify → full payload (only in quiz mode)
     if (state.mode === "quiz" && state.sessionId && state.question?.id) {
+      console.log(`Processing free text answer: "${lastUser}"`);
+      console.log(`Current question: ${state.question.conversational_text || state.question.text}`);
+
+      // Ensure we have options
       if (!Array.isArray(state.question.options) || !state.question.options.length) {
         const urls = questionUrls(state.question.id);
         const qd = await tryFetchJson(urls, { method: "GET" });
         if (qd && qd.options) state.question.options = qd.options;
       }
+
+      console.log(`Available options:`, state.question.options?.map(o => `${o.index}: ${o.text}`));
+
       const idx = await classifyFreeTextToIndexLLM(state.question, lastUser);
+      console.log(`Classified to option index: ${idx}`);
+
       if (Number.isNaN(idx)) {
         return res.json({ html: `Hmm, I didn't catch that – try a phrase like "well-maintained", or type "pick 1".` });
       }
@@ -838,13 +913,20 @@ app.post("/api/chat", async (req, res) => {
         const sideHtml = renderProfileSideCard(data.profile, data.scores);
         return res.json({ html, sideHtml });
       }
+
       if (data.question) {
         state.answers = data.currentAnswers || state.answers;
         state.scores  = data.currentScores  || state.scores;
         state.question = data.question;
+
+        // Always use conversational_text if available
         if (!state.question.conversational_text) {
+          console.log("No conversational_text for next question, rephrasing");
           state.question.conversational_text = await rephraseQuestionLLM(state.question);
+        } else {
+          console.log("Using provided conversational_text for next question");
         }
+
         SESS.set(sid, state);
         return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
       }
