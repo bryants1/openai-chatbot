@@ -862,7 +862,7 @@ app.post("/api/chat", async (req, res) => {
       }
     }
 
-    // ── QUIZ: Handle location submission (separate from start command)
+    // ── QUIZ: Handle location submission
     if (state.mode === "quiz" && state.needsLocation && lastUser.startsWith("LOCATION:")) {
       const parts = lastUser.split(":");
       const zipCode = parts[1]?.trim() || "";
@@ -878,7 +878,6 @@ app.post("/api/chat", async (req, res) => {
       if (zipCode) {
         try {
           const geoResponse = await fetch(`https://api.zippopotam.us/us/${zipCode}`);
-
           if (geoResponse.ok) {
             const geoData = await geoResponse.json();
             locationData.coords = {
@@ -887,30 +886,26 @@ app.post("/api/chat", async (req, res) => {
             };
             locationData.city = geoData.places[0]?.['place name'];
             locationData.state = geoData.places[0]?.['state abbreviation'];
-
             console.log(`Geocoded ${zipCode} to:`, locationData.coords);
-          } else {
-            console.log(`Failed to geocode ZIP: ${zipCode}`);
           }
         } catch (e) {
           console.error("Geocoding error:", e);
         }
       }
 
+      // Store location and mark that we're ready for questions
       state.location = locationData;
       state.needsLocation = false;
+      state.answers = {};
+      state.scores = {};
 
-      // Get first real question with location context
-      const urls = [`${SELF_BASE}/api/chatbot-first-question`];
-      if (QUIZ_BASE_URL) {
-        urls.push(`${QUIZ_BASE_URL}/api/chatbot-first-question`);
-      }
-
+      // Now just call the regular start endpoint again, but it will skip location since we have it
+      const urls = startUrls();
       const data = await tryFetchJson(urls, {
         method: "POST",
         body: JSON.stringify({
-          sessionId: state.sessionId,
-          location: state.location
+          skipLocation: true,  // Tell it we already have location
+          sessionId: state.sessionId
         })
       });
 
@@ -922,8 +917,6 @@ app.post("/api/chat", async (req, res) => {
       }
 
       state.question = data.question;
-      state.answers = {};
-      state.scores = {};
 
       // ensure options for chips
       if (!Array.isArray(state.question.options) || !state.question.options.length) {
@@ -934,10 +927,7 @@ app.post("/api/chat", async (req, res) => {
 
       // Always use conversational_text if available, otherwise rephrase
       if (!state.question.conversational_text) {
-        console.log("No conversational_text, rephrasing question");
         state.question.conversational_text = await rephraseQuestionLLM(state.question);
-      } else {
-        console.log("Using provided conversational_text");
       }
 
       SESS.set(sid, state);
