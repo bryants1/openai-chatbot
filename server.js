@@ -880,19 +880,25 @@ app.post("/api/chat", async (req, res) => {
           const geoResponse = await fetch(`https://api.zippopotam.us/us/${zipCode}`);
           if (geoResponse.ok) {
             const geoData = await geoResponse.json();
-            locationData.coords = {
-              lat: parseFloat(geoData.lat),
-              lon: parseFloat(geoData.lng)
-            };
-            locationData.city = geoData.places[0]?.['place name'];
-            locationData.state = geoData.places[0]?.['state abbreviation'];
-            console.log(`Geocoded ${zipCode} to:`, locationData.coords);
+            if (geoData.places && geoData.places.length > 0) {
+              locationData.coords = {
+                lat: parseFloat(geoData.places[0].latitude),
+                lon: parseFloat(geoData.places[0].longitude)
+              };
+              locationData.city = geoData.places[0]['place name'];
+              locationData.state = geoData.places[0]['state abbreviation'];
+              console.log(`Geocoded ${zipCode} to:`, locationData.coords);
+            } else {
+              console.error(`No places found for ZIP ${zipCode}`);
+            }
+          } else {
+            console.error(`Geocoding failed for ZIP ${zipCode}: ${geoResponse.status}`);
           }
         } catch (e) {
           console.error("Geocoding error:", e);
         }
       }
-
+      
       // Store location and mark that we're ready for questions
       state.location = locationData;
       state.needsLocation = false;
