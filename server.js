@@ -1009,7 +1009,8 @@ app.post("/api/chat", async (req, res) => {
           questionId:     state.question.id,
           optionIndex:    idx,
           currentAnswers: state.answers,
-          currentScores:  state.scores
+          currentScores:  state.scores,
+          location:       state.location  // ← ADD THIS LINE
         })
       });
 
