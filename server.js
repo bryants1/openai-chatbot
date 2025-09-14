@@ -27,12 +27,18 @@ const PORT = process.env.PORT || 8080;
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/,"");
 const SELF_BASE = PUBLIC_BASE_URL || `http://127.0.0.1:${PORT}`;
 
-// Optional: Vercel quiz app fallback
+// Optional: quiz app base (vercel)
 const QUIZ_BASE_URL = (process.env.QUIZ_BASE_URL || "").replace(/\/+$/,"");
 
+// Profile API (serverless) — preferred over direct DB writes
+const PROFILE_API_BASE = (process.env.PROFILE_API_BASE || "").replace(/\/+$/,"");
+const PROFILE_API_KEY  = process.env.PROFILE_API_KEY || "";
+
+// Sanity
 if (!OPENAI_API_KEY) { console.error("Missing OPENAI_API_KEY"); process.exit(1); }
 if (!QDRANT_URL)     { console.error("Missing QDRANT_URL");     process.exit(1); }
 
+// Clients
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const qdrant = new QdrantClient({ url: QDRANT_URL, apiKey: QDRANT_API_KEY });
 
@@ -73,6 +79,10 @@ function newChatState() {
     question: null,
     answers: {},
     scores: {},
+    location: null,
+    availability: null,
+    needsLocation: false,
+    needsWhen: false,
     lastLinks: []
   };
 }
@@ -84,13 +94,39 @@ function pickStr(...vals) {
     if (typeof v === "string") return v;
     if (typeof v === "number") return String(v);
     if (typeof v === "object") {
-      if (typeof v.label   === "string") return v.label;     // { label: "..." }
-      if (typeof v.primary === "string") return v.primary;   // { primary: "..." }
+      if (typeof v.label   === "string") return v.label;
+      if (typeof v.primary === "string") return v.primary;
       if (typeof v.text    === "string") return v.text;
       if (typeof v.value   === "string") return v.value;
     }
   }
   return "-";
+}
+
+// Call your Vercel profile API (serverless) safely
+function profileApiBase() {
+  return PROFILE_API_BASE || SELF_BASE; // if profile routes live in same app as this server
+}
+async function callProfileAPI(path, payload) {
+  try {
+    const r = await fetch(`${profileApiBase()}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type":"application/json",
+        ...(PROFILE_API_KEY ? { "X-Profile-Key": PROFILE_API_KEY } : {})
+      },
+      body: JSON.stringify(payload || {})
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      console.warn(`Profile API ${path} failed: ${r.status} ${t.slice(0,200)}`);
+      return { ok: false };
+    }
+    return await r.json();
+  } catch (e) {
+    console.warn(`Profile API ${path} exception:`, e?.message || e);
+    return { ok: false, error: "network" };
+  }
 }
 
 // FIXED fetch helper: properly handles response and error cases
@@ -108,11 +144,10 @@ async function tryFetchJson(urls, init) {
 
       const text = await r.text();
 
-      // Log for debugging
       if (!r.ok) {
         console.error(`Quiz endpoint failed: ${r.status} at ${url}`);
         if (DEBUG_RAG) console.error(`Response: ${text.slice(0, 500)}`);
-        continue; // Try next URL
+        continue;
       }
 
       try {
@@ -121,14 +156,13 @@ async function tryFetchJson(urls, init) {
         return json;
       } catch (e) {
         console.error(`Quiz endpoint bad JSON from ${url}:`, text.slice(0, 200));
-        continue; // Try next URL
+        continue;
       }
     } catch (e) {
       console.error(`Quiz endpoint exception for ${url}:`, e?.message || e);
-      continue; // Try next URL
+      continue;
     }
   }
-
   console.error("All quiz endpoints failed");
   return null;
 }
@@ -137,13 +171,11 @@ async function tryFetchJson(urls, init) {
 function startUrls() {
   const eps = [`${SELF_BASE}/api/chatbot/start`];
   if (QUIZ_BASE_URL) {
-    // Try both hyphenated and slash patterns
     eps.push(`${QUIZ_BASE_URL}/api/chatbot-start`);
     eps.push(`${QUIZ_BASE_URL}/api/chatbot/start`);
   }
   return eps;
 }
-
 function answerUrls() {
   const eps = [`${SELF_BASE}/api/chatbot/answer`];
   if (QUIZ_BASE_URL) {
@@ -152,18 +184,15 @@ function answerUrls() {
   }
   return eps;
 }
-
 function questionUrls(questionId) {
   const id = encodeURIComponent(questionId);
   const eps = [`${SELF_BASE}/api/chatbot/question/${id}`];
   if (QUIZ_BASE_URL) {
-    // Vercel pattern uses query parameter
     eps.push(`${QUIZ_BASE_URL}/api/chatbot-question?questionId=${id}`);
     eps.push(`${QUIZ_BASE_URL}/api/chatbot/question/${id}`);
   }
   return eps;
 }
-
 function finishUrls() {
   const eps = [`${SELF_BASE}/api/chatbot/finish`];
   if (QUIZ_BASE_URL) {
@@ -172,7 +201,6 @@ function finishUrls() {
   }
   return eps;
 }
-
 function feedbackUrls() {
   const eps = [`${SELF_BASE}/api/chatbot/feedback`];
   if (QUIZ_BASE_URL) {
@@ -201,32 +229,23 @@ function buildAnswerChips(options = []) {
     if (seen.has(key)) continue;
     seen.add(key);
     labels.push(lbl);
-    // Remove this line that limits to 3:
-    // if (labels.length >= 3) break;
   }
-
   if (!labels.length) return "";
-
   return `<div style="margin-top:4px">
     <span style="font-size:13px;color:#666;margin-right:8px">Examples:</span>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
       ${labels.map(lbl => {
-        // Properly escape for HTML attribute and JavaScript
         const htmlEscaped = lbl
           .replace(/&/g, '&amp;')
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#39;')
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;');
-
-        // For the onclick, escape for JavaScript string
         const jsEscaped = lbl
           .replace(/\\/g, '\\\\')
           .replace(/'/g, "\\'")
           .replace(/"/g, '\\"')
-          .replace(/\n/g, '\\n')
-          .replace(/\r/g, '\\r');
-
+          .replace(/\n/g, '\\n').replace(/\r/g, '\\r');
         return `<button type="button"
           style="display:inline-block;padding:6px 10px;border:1px solid #ddd;border-radius:14px;background:#fff;cursor:pointer;font-size:13px;transition:all 0.2s;hover:background:#f5f5f5"
           onmouseover="this.style.backgroundColor='#f5f5f5'"
@@ -272,7 +291,7 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   const rec   = profile.recommendations || {};
 
   const skill   = pickStr(profile.skillLevel, profile.skill);
-  const persona = pickStr(profile.personality, profile.personality?.primary);
+  the persona   = pickStr(profile.personality, profile.personality?.primary);
 
   const style   = pickStr(rec.courseStyle);
   const budget  = pickStr(rec.budgetLevel);
@@ -373,41 +392,20 @@ async function classifyFreeTextToIndexLLM(q, freeText) {
       emoji: o.emoji || ""
     }));
 
-    // Clean the user's input
     const userInput = freeText.toLowerCase().trim();
 
-    // Direct number match
     const numberMatch = userInput.match(/^\d+$/);
     if (numberMatch && options.some(o => o.index === Number(numberMatch[0]))) {
-      console.log(`Direct number match: ${numberMatch[0]}`);
       return Number(numberMatch[0]);
     }
 
-    // Check for exact or close text matches first
     for (const opt of options) {
-      // Remove emoji and clean the option text
       const cleanOption = opt.text.replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\u200D]+/gu, "").trim();
-
-      // Exact match
-      if (userInput === cleanOption) {
-        console.log(`Exact match found: option ${opt.index}`);
-        return opt.index;
-      }
-
-      // Check if user input contains most of the option text
-      if (cleanOption && userInput.includes(cleanOption)) {
-        console.log(`Partial match found: option ${opt.index}`);
-        return opt.index;
-      }
-
-      // Check if option contains the user input (for abbreviated responses)
-      if (cleanOption && cleanOption.includes(userInput) && userInput.length > 3) {
-        console.log(`Abbreviated match found: option ${opt.index}`);
-        return opt.index;
-      }
+      if (userInput === cleanOption) return opt.index;
+      if (cleanOption && userInput.includes(cleanOption)) return opt.index;
+      if (cleanOption && cleanOption.includes(userInput) && userInput.length > 3) return opt.index;
     }
 
-    // Use GPT for classification
     const sys = `You are classifying a golfer's response to a multiple choice question.
 Match their response to the BEST fitting option index.
 Return ONLY a JSON object: {"optionIndex": <number>}`;
@@ -431,19 +429,11 @@ Which option index best matches their response?`;
     });
 
     const out = (r.choices[0]?.message?.content || "").trim();
-    console.log(`GPT classification response: ${out}`);
-
     const m = out.match(/"optionIndex"\s*:\s*(\d+)/i);
     if (m) {
       const idx = Number(m[1]);
-      if (options.some(o => o.index === idx)) {
-        console.log(`GPT matched to option ${idx}`);
-        return idx;
-      }
+      if (options.some(o => o.index === idx)) return idx;
     }
-
-    // Fallback: pick first option
-    console.log(`Classification failed, defaulting to first option`);
     return options[0]?.index ?? 0;
 
   } catch (error) {
@@ -500,141 +490,45 @@ app.get("/", (req, res) => {
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenAI Chatbot</title>
-    <style>
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            background: #fafafa;
-            color: #222;
-            margin: 0;
-        }
-        .container {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 24px;
-            max-width: 1200px;
-            margin: 24px auto;
-            padding: 0 16px;
-        }
-        .card {
-            background: #fff;
-            border: 1px solid #e5e5e5;
-            border-radius: 12px;
-            padding: 16px;
-        }
-        .row {
-            display: flex;
-            gap: 8px;
-        }
-        textarea {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #ddd;
-            border-radius: 10px;
-        }
-        button {
-            padding: 10px 14px;
-            border-radius: 10px;
-            border: 1px solid #0a7;
-            cursor: pointer;
-        }
-        .msg {
-            padding: 10px 12px;
-            border-radius: 10px;
-            margin: 8px 0;
-        }
-        .me {
-            background: #e9f7ff;
-        }
-        .bot {
-            background: #f7f7f7;
-        }
-        .muted {
-            color: #777;
-        }
-    </style>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenAI Chatbot</title>
+  <style>
+    body{font-family:system-ui,-apple-system,sans-serif;background:#fafafa;color:#222;margin:0}
+    .container{display:grid;grid-template-columns:2fr 1fr;gap:24px;max-width:1200px;margin:24px auto;padding:0 16px}
+    .card{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:16px}
+    .row{display:flex;gap:8px}
+    textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px}
+    button{padding:10px 14px;border-radius:10px;border:1px solid #0a7;cursor:pointer}
+    .msg{padding:10px 12px;border-radius:10px;margin:8px 0}.me{background:#e9f7ff}.bot{background:#f7f7f7}
+    .muted{color:#777}
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="card">
-            <h1>OpenAI Chatbot</h1>
-            <div class="muted">Try: best courses near boston or start for quiz</div>
-            <div id="log"></div>
-            <div class="row">
-                <textarea id="box" rows="2" placeholder="Type a message"></textarea>
-                <button id="btn">Send</button>
-            </div>
-        </div>
-        <div class="card">
-            <h2>Related</h2>
-            <div id="side" class="muted">No related info.</div>
-        </div>
+  <div class="container">
+    <div class="card">
+      <h1>OpenAI Chatbot</h1>
+      <div class="muted">Try: best courses near boston or start for quiz</div>
+      <div id="log"></div>
+      <div class="row">
+        <textarea id="box" rows="2" placeholder="Type a message"></textarea>
+        <button id="btn">Send</button>
+      </div>
     </div>
-    <script>
-        const log = document.getElementById("log");
-        const box = document.getElementById("box");
-        const btn = document.getElementById("btn");
-        const side = document.getElementById("side");
-
-        function render(html, isMe) {
-            const d = document.createElement("div");
-            d.className = "msg " + (isMe ? "me" : "bot");
-            d.innerHTML = html;
-            log.appendChild(d);
-            log.scrollTop = log.scrollHeight;
-        }
-
-        async function sendMessage() {
-            const text = box.value.trim();
-            if (!text) return;
-
-            render("<strong>You:</strong><br>" + text, true);
-            box.value = "";
-
-            let j = null;
-            try {
-                const r = await fetch("/api/chat", {
-                    method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({messages: [{role: "user", content: text}]})
-                });
-                j = await r.json();
-                const defaultMsg = "I do not have that in the site content.";
-                render(j.html || defaultMsg, false);
-            } catch(e) {
-                render("Error: " + (e.message || e), false);
-            }
-
-            if (j && typeof j.sideHtml === "string" && j.sideHtml.length) {
-                side.innerHTML = j.sideHtml;
-            } else if (!j || !j.suppressSidecar) {
-                try {
-                    const r2 = await fetch("/api/sidecar?q=" + encodeURIComponent(text));
-                    const p = await r2.json();
-                    const defaultSide = "<div class=\\"card\\">No related info.</div>";
-                    side.innerHTML = p.html || defaultSide;
-                } catch(e) {
-                    side.innerHTML = "<div class=\\"card\\">No related info.</div>";
-                }
-            }
-        }
-
-        btn.addEventListener("click", sendMessage);
-        box.addEventListener("keydown", function(e) {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-        window.addEventListener("load", function() {
-            box.focus();
-        });
-    </script>
+    <div class="card">
+      <h2>Related</h2>
+      <div id="side" class="muted">No related info.</div>
+    </div>
+  </div>
+  <script>
+    const log=document.getElementById("log"),box=document.getElementById("box"),btn=document.getElementById("btn"),side=document.getElementById("side");
+    function render(html,isMe){const d=document.createElement("div");d.className="msg "+(isMe?"me":"bot");d.innerHTML=html;log.appendChild(d);log.scrollTop=log.scrollHeight;}
+    async function sendMessage(){const text=box.value.trim();if(!text)return;render("<strong>You:</strong><br>"+text,true);box.value="";
+      let j=null;try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{role:"user",content:text}]})});j=await r.json();render(j.html||"I do not have that in the site content.",false);}catch(e){render("Error: "+(e.message||e),false);}
+      if(j&&typeof j.sideHtml==="string"&&j.sideHtml.length){side.innerHTML=j.sideHtml;}else if(!j||!j.suppressSidecar){try{const r2=await fetch("/api/sidecar?q="+encodeURIComponent(text));const p=await r2.json();side.innerHTML=p.html||"<div class=\\"card\\">No related info.</div>";}catch(e){side.innerHTML="<div class=\\"card\\">No related info.</div>";}}}
+    btn.addEventListener("click",sendMessage);box.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}});window.addEventListener("load",()=>box.focus());
+  </script>
 </body>
 </html>`;
-
   res.send(html);
 });
 
@@ -649,29 +543,36 @@ function getSid(req, res) {
   res.setHeader("Set-Cookie", `sid=${sid}; Path=/; HttpOnly; SameSite=Lax`);
   return sid;
 }
+function getUid(req, res) {
+  const cookie = req.headers.cookie || "";
+  const m = /uid=([A-Za-z0-9_-]+)/.exec(cookie);
+  if (m) return m[1];
+  const uid = Math.random().toString(36).slice(2);
+  res.setHeader("Set-Cookie", `uid=${uid}; Path=/; HttpOnly; SameSite=Lax`);
+  return uid;
+}
 app.use("/api/chatbot", chatbotRouter);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Chat endpoint (quiz is explicit opt-in; RAG is default)
-// Chat endpoint (quiz is explicit opt-in; RAG is default)
 app.post("/api/chat", async (req, res) => {
   try {
     const sid = getSid(req, res);
+    const uid = getUid(req, res);
     const state = SESS.get(sid) || newChatState();
     const { messages = [] } = req.body || {};
     const lastUser = [...messages].reverse().find(m => m.role === "user")?.content?.trim() || "";
     const intent = lastUser.trim().toLowerCase();
     const isStartCmd = (intent === "start" || intent === "start quiz");
 
-    // cancel/exit quiz
+    // cancel/exit
     if (/^\s*(cancel|stop|exit|end)\s*(quiz)?\s*$/i.test(lastUser)) {
       SESS.set(sid, newChatState());
       return res.json({ html: "Got it – I've exited the quiz. Ask anything or type 'start' to begin again." });
     }
 
-    // ── RAG BY DEFAULT: if we're NOT in quiz mode and it's NOT an explicit start, do search and return
+    // RAG path by default
     if (state.mode !== "quiz" && !isStartCmd) {
-      // -------- RAG path (unchanged logic) --------
       const locForQuery = extractLocation(lastUser);
       const variants = [
         lastUser, lastUser.toLowerCase(), lastUser.replace(/[^\w\s]/g, " "),
@@ -686,14 +587,14 @@ app.post("/api/chat", async (req, res) => {
       }
       siteHits = await voyageRerank(lastUser, siteHits, 40);
 
-      // De-dup by url#chunk
+      // dedupe by url#chunk
       const seen = new Set();
       siteHits = siteHits.filter(h => {
         const key = `${h.payload?.url}#${h.payload?.chunk_index ?? "html"}`;
         if (seen.has(key)) return false; seen.add(key); return true;
       });
 
-      // Filter + lexical boost
+      // lexical boost
       const qlen = lastUser.split(/\s+/).filter(Boolean).length;
       const dynamicThreshold = 0.06 + Math.min(0.12, qlen * 0.01);
       const tokens = normalizeText(lastUser).split(/\s+/).filter(t => t && t.length > 2);
@@ -706,7 +607,7 @@ app.post("/api/chat", async (req, res) => {
         .map(h => ({ ...h, _lex: lexBoost(h) }))
         .sort((a,b)=> (b.score + 0.03*b._lex) - (a.score + 0.03*a._lex));
 
-      // De-dupe by URL and assemble final
+      // keep top unique URLs
       const keep = new Map();
       for (const h of goodSite.slice(0, 20)) {
         const key = h.payload?.url || ""; if (!keep.has(key)) keep.set(key, h);
@@ -720,7 +621,6 @@ app.post("/api/chat", async (req, res) => {
         finalHits = finalHits.slice(0, 10);
       }
 
-      // Context + links
       const MAX_CHARS = 12000;
       let context = "", links = [];
       for (let i=0;i<finalHits.length;i++){
@@ -733,7 +633,6 @@ app.post("/api/chat", async (req, res) => {
         context += block; links.push(url);
       }
 
-      // Prompt
       let systemContent = `You are a friendly golf buddy who knows course details from the site context.
       Your tone should be conversational but accurate and evidence-bound.
       Rules:
@@ -752,7 +651,6 @@ app.post("/api/chat", async (req, res) => {
         ${context}`;
       }
 
-      // LLM
       let reply = "";
       try {
         const completion = await openai.chat.completions.create({
@@ -760,8 +658,7 @@ app.post("/api/chat", async (req, res) => {
           messages: [{ role: "system", content: systemContent }, ...messages.filter(m => m.role === "user")],
           temperature: 0.3, max_tokens: 450,
         });
-        reply = completion.choices[0]?.message?.content || "";
-        reply = (reply || "").trim();
+        reply = (completion.choices[0]?.message?.content || "").trim();
       } catch (e) { console.warn("OpenAI summarize failed:", e?.message || e); reply = ""; }
 
       const allLinks = [...new Set(links)];
@@ -777,23 +674,21 @@ app.post("/api/chat", async (req, res) => {
         SESS.set(sid, { ...state, lastLinks: [] });
       }
       return res.json({ html: sections.join("<br/><br/>") });
-      // -------- end RAG path --------
     }
 
-    // ── QUIZ: start (only if explicitly asked)
+    // ── QUIZ: start
     if (isStartCmd) {
       const urls = startUrls();
       const data = await tryFetchJson(urls, { method: "POST", body: JSON.stringify({}) });
 
       if (!data) {
         SESS.set(sid, newChatState());
-        console.error("Quiz start failed - no data returned");
         return res.json({
           html: "Sorry, I couldn't start the quiz right now. Please try again or ask me about golf courses directly."
         });
       }
 
-      // Handle location collection flow
+      // Collect location first
       if (data.needsLocation) {
         state.mode = "quiz";
         state.sessionId = data.sessionId;
@@ -817,12 +712,9 @@ app.post("/api/chat", async (req, res) => {
                 var zip = document.getElementById('zipcode').value;
                 var radius = document.getElementById('radius').value;
                 var box = document.getElementById('box');
-                if(box) {
-                  box.value = 'LOCATION:' + zip + ':' + radius;
-                  document.getElementById('btn').click();
-                }
+                if(box) { box.value = 'LOCATION:' + zip + ':' + radius; document.getElementById('btn').click(); }
               })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">
-                Start Quiz
+                Continue
               </button>
             </div>
             <div style="margin-top:8px;font-size:12px;color:#666">
@@ -833,7 +725,7 @@ app.post("/api/chat", async (req, res) => {
         });
       }
 
-      // If we have a question (old flow without location), handle it
+      // Legacy: if API returns first question directly
       if (data.question) {
         state.mode = "quiz";
         state.sessionId = data.sessionId;
@@ -842,19 +734,13 @@ app.post("/api/chat", async (req, res) => {
         state.scores    = {};
         state.lastLinks = [];
 
-        // ensure options for chips
         if (!Array.isArray(state.question.options) || !state.question.options.length) {
-          const urls = questionUrls(state.question.id);
-          const qd = await tryFetchJson(urls, { method: "GET" });
+          const urlsQ = questionUrls(state.question.id);
+          const qd = await tryFetchJson(urlsQ, { method: "GET" });
           if (qd && qd.options) state.question.options = qd.options;
         }
-
-        // Always use conversational_text if available, otherwise rephrase
         if (!state.question.conversational_text) {
-          console.log("No conversational_text, rephrasing question");
           state.question.conversational_text = await rephraseQuestionLLM(state.question);
-        } else {
-          console.log("Using provided conversational_text");
         }
 
         SESS.set(sid, state);
@@ -862,19 +748,14 @@ app.post("/api/chat", async (req, res) => {
       }
     }
 
-    // ── QUIZ: Handle location submission
+    // ── QUIZ: Handle location submission -> ask WHEN next
     if (state.mode === "quiz" && state.needsLocation && lastUser.startsWith("LOCATION:")) {
       const parts = lastUser.split(":");
       const zipCode = parts[1]?.trim() || "";
       const radius = parseInt(parts[2]) || 25;
 
-      let locationData = {
-        zipCode,
-        radius,
-        coords: null
-      };
+      let locationData = { zipCode, radius, coords: null };
 
-      // Geocode ZIP if provided
       if (zipCode) {
         try {
           const geoResponse = await fetch(`https://api.zippopotam.us/us/${zipCode}`);
@@ -887,51 +768,105 @@ app.post("/api/chat", async (req, res) => {
               };
               locationData.city = geoData.places[0]['place name'];
               locationData.state = geoData.places[0]['state abbreviation'];
-              console.log(`Geocoded ${zipCode} to:`, locationData.coords);
-            } else {
-              console.error(`No places found for ZIP ${zipCode}`);
             }
-          } else {
-            console.error(`Geocoding failed for ZIP ${zipCode}: ${geoResponse.status}`);
           }
         } catch (e) {
           console.error("Geocoding error:", e);
         }
       }
-      
-      // Store location and mark that we're ready for questions
+
       state.location = locationData;
       state.needsLocation = false;
+      state.needsWhen = true;
       state.answers = {};
-      state.scores = {};
+      state.scores  = {};
+      SESS.set(sid, state);
 
-      // Now just call the regular start endpoint again, but it will skip location since we have it
+      // Call profile API to upsert location
+      await callProfileAPI("/api/profile/location", {
+        user_id: getUid(req, res), // uid cookie
+        city: state.location?.city,
+        lat: state.location?.coords?.lat,
+        lon: state.location?.coords?.lon,
+        radius_km: state.location?.radius
+      });
+
+      // Ask WHEN
+      return res.json({
+        html: `
+          <div style="font-size:16px;margin:0 0 10px">Great — now when do you want to play?</div>
+          <div style="margin:10px 0">
+            <input type="text" id="dateFrom" placeholder="Start date (YYYY-MM-DD)" style="padding:8px;border:1px solid #ddd;border-radius:6px;width:180px;margin-right:8px">
+            <input type="text" id="dateTo" placeholder="End date (YYYY-MM-DD)" style="padding:8px;border:1px solid #ddd;border-radius:6px;width:180px;margin-right:8px">
+            <select id="bucket" style="padding:8px;border:1px solid #ddd;border-radius:6px">
+              <option value="">(optional) Time window</option>
+              <option value="weekend_mornings">Weekend mornings</option>
+              <option value="weekend_afternoons">Weekend afternoons</option>
+              <option value="weekdays">Weekdays</option>
+            </select>
+            <button onclick="(function(){
+              var from = document.getElementById('dateFrom').value.trim();
+              var to = document.getElementById('dateTo').value.trim();
+              var b = document.getElementById('bucket').value.trim();
+              var box = document.getElementById('box');
+              if (box) { box.value = 'WHEN:' + (from||'') + ':' + (to||'') + ':' + (b||''); document.getElementById('btn').click(); }
+            })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">
+              Continue
+            </button>
+          </div>
+          <div style="margin-top:8px;font-size:12px;color:#666">
+            You can also type: WHEN:2025-10-01:2025-10-15 or WHEN:: :weekend_mornings
+          </div>
+        `,
+        suppressSidecar: true
+      });
+    }
+
+    // ── QUIZ: Handle WHEN submission, then start quiz
+    if (state.mode === "quiz" && state.needsWhen && lastUser.startsWith("WHEN:")) {
+      const parts = lastUser.split(":"); // ["WHEN", from, to, bucket]
+      const from = (parts[1] || "").trim();
+      const to   = (parts[2] || "").trim();
+      const bucket = (parts[3] || "").trim();
+
+      state.needsWhen = false;
+      state.availability = {};
+      if (from)   state.availability.from = from;
+      if (to)     state.availability.to   = to;
+      if (bucket) state.availability.bucket = bucket;
+      SESS.set(sid, state);
+
+      // Upsert availability via profile API
+      await callProfileAPI("/api/profile/availability", {
+        user_id: getUid(req, res),
+        from: state.availability?.from,
+        to: state.availability?.to,
+        bucket: state.availability?.bucket
+      });
+
+      // Start quiz now that we have WHERE/WHEN
       const urls = startUrls();
-      const data = await tryFetchJson(urls, {
+      const startData = await tryFetchJson(urls, {
         method: "POST",
         body: JSON.stringify({
-          skipLocation: true,  // Tell it we already have location
-          sessionId: state.sessionId
+          skipLocation: true,
+          sessionId: state.sessionId,
+          availability: state.availability
         })
       });
 
-      if (!data || !data.question) {
+      if (!startData || !startData.question) {
         SESS.set(sid, newChatState());
-        return res.json({
-          html: "Sorry, I couldn't start the quiz. Please try again."
-        });
+        return res.json({ html: "Sorry, I couldn't start the quiz. Please try again." });
       }
 
-      state.question = data.question;
+      state.question = startData.question;
 
-      // ensure options for chips
       if (!Array.isArray(state.question.options) || !state.question.options.length) {
-        const urls = questionUrls(state.question.id);
-        const qd = await tryFetchJson(urls, { method: "GET" });
+        const urlsQ = questionUrls(state.question.id);
+        const qd = await tryFetchJson(urlsQ, { method: "GET" });
         if (qd && qd.options) state.question.options = qd.options;
       }
-
-      // Always use conversational_text if available, otherwise rephrase
       if (!state.question.conversational_text) {
         state.question.conversational_text = await rephraseQuestionLLM(state.question);
       }
@@ -939,73 +874,11 @@ app.post("/api/chat", async (req, res) => {
       SESS.set(sid, state);
       return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
     }
-      // ── QUIZ: numeric pick (only in quiz mode)
-      const pickOnly = lastUser.match(/^(?:pick|answer|option)?\s*(\d+)\s*$/i);
-      if (pickOnly && state.mode === "quiz" && state.sessionId && state.question?.id) {
-        const idx = Number(pickOnly[1]);
-        console.log(`Numeric answer selected: ${idx}`);
 
-        const urls = answerUrls();
-        const data = await tryFetchJson(urls, {
-          method: "POST",
-          body: JSON.stringify({
-            sessionId:      state.sessionId,
-            questionId:     state.question.id,
-            optionIndex:    idx,
-            currentAnswers: state.answers,
-            currentScores:  state.scores,
-            location:       state.location  // Pass location through
-          })
-        });
-
-        if (!data) return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
-
-        if (data.complete) {
-          state.mode = null; state.question = null; SESS.set(sid, state);
-          const html = renderFinalProfileHTML(data.profile, data.scores, data.totalQuestions).replace(/\n/g,"<br/>");
-          const sideHtml = renderProfileSideCard(data.profile, data.scores);
-          return res.json({ html, sideHtml });
-        }
-
-        if (data.question) {
-          state.answers = data.currentAnswers || state.answers;
-          state.scores  = data.currentScores  || state.scores;
-          state.question = data.question;
-
-          // Always use conversational_text if available
-          if (!state.question.conversational_text) {
-            console.log("No conversational_text for next question, rephrasing");
-            state.question.conversational_text = await rephraseQuestionLLM(state.question);
-          } else {
-            console.log("Using provided conversational_text for next question");
-          }
-
-          SESS.set(sid, state);
-          return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
-        }
-        return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
-      }
-
-    // ── QUIZ: free-text → classify → full payload (only in quiz mode)
-    if (state.mode === "quiz" && state.sessionId && state.question?.id) {
-      console.log(`Processing free text answer: "${lastUser}"`);
-      console.log(`Current question: ${state.question.conversational_text || state.question.text}`);
-
-      // Ensure we have options
-      if (!Array.isArray(state.question.options) || !state.question.options.length) {
-        const urls = questionUrls(state.question.id);
-        const qd = await tryFetchJson(urls, { method: "GET" });
-        if (qd && qd.options) state.question.options = qd.options;
-      }
-
-      console.log(`Available options:`, state.question.options?.map(o => `${o.index}: ${o.text}`));
-
-      const idx = await classifyFreeTextToIndexLLM(state.question, lastUser);
-      console.log(`Classified to option index: ${idx}`);
-
-      if (Number.isNaN(idx)) {
-        return res.json({ html: `Hmm, I didn't catch that – try a phrase like "well-maintained", or type "pick 1".` });
-      }
+    // ── QUIZ: numeric pick
+    const pickOnly = lastUser.match(/^(?:pick|answer|option)?\s*(\d+)\s*$/i);
+    if (pickOnly && state.mode === "quiz" && state.sessionId && state.question?.id) {
+      const idx = Number(pickOnly[1]);
 
       const urls = answerUrls();
       const data = await tryFetchJson(urls, {
@@ -1016,7 +889,8 @@ app.post("/api/chat", async (req, res) => {
           optionIndex:    idx,
           currentAnswers: state.answers,
           currentScores:  state.scores,
-          location:       state.location  // ← ADD THIS LINE
+          location:       state.location,
+          availability:   state.availability
         })
       });
 
@@ -1034,12 +908,8 @@ app.post("/api/chat", async (req, res) => {
         state.scores  = data.currentScores  || state.scores;
         state.question = data.question;
 
-        // Always use conversational_text if available
         if (!state.question.conversational_text) {
-          console.log("No conversational_text for next question, rephrasing");
           state.question.conversational_text = await rephraseQuestionLLM(state.question);
-        } else {
-          console.log("Using provided conversational_text for next question");
         }
 
         SESS.set(sid, state);
@@ -1048,7 +918,58 @@ app.post("/api/chat", async (req, res) => {
       return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
     }
 
-    // If we got here, we weren't in quiz mode and it wasn't "start" → just do RAG next time
+    // ── QUIZ: free-text → classify → post
+    if (state.mode === "quiz" && state.sessionId && state.question?.id) {
+      if (!Array.isArray(state.question.options) || !state.question.options.length) {
+        const urlsQ = questionUrls(state.question.id);
+        const qd = await tryFetchJson(urlsQ, { method: "GET" });
+        if (qd && qd.options) state.question.options = qd.options;
+      }
+
+      const idx = await classifyFreeTextToIndexLLM(state.question, lastUser);
+      if (Number.isNaN(idx)) {
+        return res.json({ html: `Hmm, I didn't catch that – try a phrase like "well-maintained", or type "pick 1".` });
+      }
+
+      const urls = answerUrls();
+      const data = await tryFetchJson(urls, {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId:      state.sessionId,
+          questionId:     state.question.id,
+          optionIndex:    idx,
+          currentAnswers: state.answers,
+          currentScores:  state.scores,
+          location:       state.location,
+          availability:   state.availability
+        })
+      });
+
+      if (!data) return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
+
+      if (data.complete) {
+        state.mode = null; state.question = null; SESS.set(sid, state);
+        const html = renderFinalProfileHTML(data.profile, data.scores, data.totalQuestions).replace(/\n/g,"<br/>");
+        const sideHtml = renderProfileSideCard(data.profile, data.scores);
+        return res.json({ html, sideHtml });
+      }
+
+      if (data.question) {
+        state.answers = data.currentAnswers || state.answers;
+        state.scores  = data.currentScores  || state.scores;
+        state.question = data.question;
+
+        if (!state.question.conversational_text) {
+          state.question.conversational_text = await rephraseQuestionLLM(state.question);
+        }
+
+        SESS.set(sid, state);
+        return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
+      }
+      return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
+    }
+
+    // default
     return res.json({ html: "Tell me what you're looking for – try \"courses in Wayland\" or type \"start\" to begin the quiz." });
 
   } catch (e) {
