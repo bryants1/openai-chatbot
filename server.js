@@ -1,1031 +1,491 @@
-// Quiz is explicit opt-in ("start" / "start quiz"); cancel exits.
-// RAG is the default for everything else. Robust fallback to QUIZ_BASE_URL.
+// server.js
+// ── .env loader FIRST - before any other imports ─────────────────────────
+import fs from "fs";
+import path from "path";
+import dotenv from "dotenv";
+import { fileURLToPath } from "url";
+import { QdrantClient } from "@qdrant/js-client-rest";
+import { createClient } from '@supabase/supabase-js';
 
-import "dotenv/config";
+// Always load .env that sits next to this file (server.js), not CWD
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ENV_PATH = path.join(__dirname, ".env");
+
+// Optional: tell yourself which .env we tried to use
+if (!fs.existsSync(ENV_PATH)) {
+  console.error(`[env] No .env found at ${ENV_PATH}`);
+} else {
+  console.log(`[env] Loading .env from ${ENV_PATH}`);
+}
+
+// LOAD ENV FIRST
+dotenv.config({ path: ENV_PATH, override: true });
+
+// Debug env vars
+console.log("[debug] QDRANT_URL =", process.env.QDRANT_URL ? "loaded" : "MISSING");
+console.log("[debug] COURSE_QDRANT_URL =", process.env.COURSE_QDRANT_URL ? "loaded" : "MISSING");
+console.log("[debug] QDRANT_COLLECTION =", process.env.QDRANT_COLLECTION || "not set");
+console.log("[debug] SUPABASE_URL =", process.env.SUPABASE_URL ? "loaded" : "MISSING");
+console.log("[debug] SUPABASE_SERVICE_ROLE_KEY =", process.env.SUPABASE_SERVICE_ROLE_KEY ? "loaded" : "MISSING");
+
+// Mask for safe logging
+const mask = (s) => (s ? `${s.slice(0, 4)}…${s.slice(-4)} (len=${s.length})` : "undefined");
+console.log("[env] OPENAI_API_KEY =", mask(process.env.OPENAI_API_KEY || ""));
+
+// Fail fast with helpful messages if keys are missing
+if (!process.env.OPENAI_API_KEY) {
+  console.error(
+    `[env] Missing OPENAI_API_KEY. Expected it in ${ENV_PATH}. ` +
+    `If you set an OS-level OPENAI_API_KEY, remove it or rename to avoid conflicts.`
+  );
+  process.exit(1);
+}
+
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error(
+    `[env] Missing Supabase credentials. Need SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in ${ENV_PATH}`
+  );
+  process.exit(1);
+}
+
+// ── Setup clients AFTER env is loaded ─────────────────────────────────
+import OpenAI from "openai";
+
+export const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+console.log(`[openai] OpenAI client initialized with key prefix: ${process.env.OPENAI_API_KEY.slice(0, 6)}…`);
+
+// Setup Qdrant clients
+export const siteQdrant = process.env.QDRANT_URL ? new QdrantClient({
+  url: process.env.QDRANT_URL,
+  apiKey: process.env.QDRANT_API_KEY || ""
+}) : null;
+
+export const courseQdrant = process.env.COURSE_QDRANT_URL ? new QdrantClient({
+  url: process.env.COURSE_QDRANT_URL,
+  apiKey: process.env.COURSE_QDRANT_API_KEY || ""
+}) : null;
+
+console.log(`[qdrant] Site client: ${siteQdrant ? 'initialized' : 'disabled'}`);
+console.log(`[qdrant] Course client: ${courseQdrant ? 'initialized' : 'disabled'}`);
+
+// Setup Supabase client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+console.log(`[supabase] Client initialized`);
+
+// ── Rest of server setup ───────────────────────────────────────────────
 import express from "express";
 import cors from "cors";
-import OpenAI from "openai";
-import { QdrantClient } from "@qdrant/js-client-rest";
-import fetch from "node-fetch";
-import chatbotRouter from "./api/golfChatbotRouter.js";
-
-// ──────────────────────────────────────────────────────────────────────────
-// ENV
-const REFUSAL = "I don't have that in the site content.";
-const DEBUG_RAG = process.env.DEBUG_RAG === "1";
-
-const OPENAI_API_KEY   = process.env.OPENAI_API_KEY;
-const QDRANT_URL       = process.env.QDRANT_URL;
-const QDRANT_API_KEY   = process.env.QDRANT_API_KEY || "";
-const QDRANT_COLL      = process.env.QDRANT_COLLECTION || "site_docs";
-const SITE_VECTOR_NAME = (process.env.SITE_VECTOR_NAME || "").trim();
-
-const VOYAGE_API_KEY      = (process.env.VOYAGE_API_KEY || "").trim();
-const VOYAGE_RERANK_MODEL = (process.env.VOYAGE_RERANK_MODEL || "rerank-2-lite").trim();
-
-const PORT = process.env.PORT || 8080;
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/,"");
-const SELF_BASE = PUBLIC_BASE_URL || `http://127.0.0.1:${PORT}`;
-
-// Optional: quiz app base (vercel)
-const QUIZ_BASE_URL = (process.env.QUIZ_BASE_URL || "").replace(/\/+$/,"");
-
-// Profile API (serverless) — preferred over direct DB writes
-const PROFILE_API_BASE = (process.env.PROFILE_API_BASE || "").replace(/\/+$/,"");
-const PROFILE_API_KEY  = process.env.PROFILE_API_KEY || "";
-
-// Sanity
-if (!OPENAI_API_KEY) { console.error("Missing OPENAI_API_KEY"); process.exit(1); }
-if (!QDRANT_URL)     { console.error("Missing QDRANT_URL");     process.exit(1); }
-
-// Clients
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-const qdrant = new QdrantClient({ url: QDRANT_URL, apiKey: QDRANT_API_KEY });
+import chatRouter from "./routes/chat.js";
 
 const app = express();
 app.set("trust proxy", 1);
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
-// ──────────────────────────────────────────────────────────────────────────
-// Helpers
-
-function isListIntent(q) {
-  if (!q) return false;
-  const s = q.toLowerCase();
-  return /(best|top|list|recommend|recommendation|near|close to|within|under\s*\$?\d+|courses?\s+(in|near|around)|bucket\s*list)/i.test(s);
-}
-function normalizeText(s) { return (s || "").toLowerCase().replace(/\s+/g, " ").trim(); }
-function anchor(u) {
-  const esc = (t) => t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  try { const url = new URL(u); return `<a href="${esc(url.toString())}" target="_blank" rel="noreferrer">${esc(url.toString())}</a>`; }
-  catch { return esc(u); }
-}
-function extractLocation(text = "") {
-  const t = (text || "").trim();
-  let m = t.match(/\b(?:in|near|around|close to)\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
-  if (m) return m[1].replace(/[.,]+$/,'').trim();
-  m = t.match(/\b(?:courses?|golf|weather)\s+in\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
-  if (m) return m[1].replace(/[.,]+$/,'').trim();
-  const words = t.replace(/[^A-Za-z\s-]/g, " ").trim().split(/\s+/);
-  if (words.length > 0 && words.length <= 3) return words.join(" ");
-  const tail = t.match(/([A-Za-z][A-Za-z\s-]{1,40})$/);
-  return tail ? tail[1].trim() : "";
-}
-function newChatState() {
-  return {
-    mode: null,           // "quiz" when in quiz flow; null = normal chat
-    sessionId: null,
-    question: null,
-    answers: {},
-    scores: {},
-    location: null,
-    availability: null,
-    needsLocation: false,
-    needsWhen: false,
-    lastLinks: []
-  };
-}
-
-// Safely turn mixed shapes into strings (handles {label}, {primary}, etc.)
-function pickStr(...vals) {
-  for (const v of vals) {
-    if (v == null) continue;
-    if (typeof v === "string") return v;
-    if (typeof v === "number") return String(v);
-    if (typeof v === "object") {
-      if (typeof v.label   === "string") return v.label;
-      if (typeof v.primary === "string") return v.primary;
-      if (typeof v.text    === "string") return v.text;
-      if (typeof v.value   === "string") return v.value;
-    }
-  }
-  return "-";
-}
-
-// Call your Vercel profile API (serverless) safely
-function profileApiBase() {
-  return PROFILE_API_BASE || SELF_BASE; // if profile routes live in same app as this server
-}
-async function callProfileAPI(path, payload) {
-  try {
-    const r = await fetch(`${profileApiBase()}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type":"application/json",
-        ...(PROFILE_API_KEY ? { "X-Profile-Key": PROFILE_API_KEY } : {})
-      },
-      body: JSON.stringify(payload || {})
-    });
-    if (!r.ok) {
-      const t = await r.text();
-      console.warn(`Profile API ${path} failed: ${r.status} ${t.slice(0,200)}`);
-      return { ok: false };
-    }
-    return await r.json();
-  } catch (e) {
-    console.warn(`Profile API ${path} exception:`, e?.message || e);
-    return { ok: false, error: "network" };
-  }
-}
-
-// FIXED fetch helper: properly handles response and error cases
-async function tryFetchJson(urls, init) {
-  for (const url of urls) {
-    try {
-      console.log(`Trying: ${url}`);
-      const r = await fetch(url, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(init?.headers || {})
-        }
-      });
-
-      const text = await r.text();
-
-      if (!r.ok) {
-        console.error(`Quiz endpoint failed: ${r.status} at ${url}`);
-        if (DEBUG_RAG) console.error(`Response: ${text.slice(0, 500)}`);
-        continue;
-      }
-
-      try {
-        const json = JSON.parse(text);
-        console.log(`Success from ${url}`);
-        return json;
-      } catch (e) {
-        console.error(`Quiz endpoint bad JSON from ${url}:`, text.slice(0, 200));
-        continue;
-      }
-    } catch (e) {
-      console.error(`Quiz endpoint exception for ${url}:`, e?.message || e);
-      continue;
-    }
-  }
-  console.error("All quiz endpoints failed");
-  return null;
-}
-
-// URL generation functions with correct patterns
-function startUrls() {
-  const eps = [`${SELF_BASE}/api/chatbot/start`];
-  if (QUIZ_BASE_URL) {
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot-start`);
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot/start`);
-  }
-  return eps;
-}
-function answerUrls() {
-  const eps = [`${SELF_BASE}/api/chatbot/answer`];
-  if (QUIZ_BASE_URL) {
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot-answer`);
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot/answer`);
-  }
-  return eps;
-}
-function questionUrls(questionId) {
-  const id = encodeURIComponent(questionId);
-  const eps = [`${SELF_BASE}/api/chatbot/question/${id}`];
-  if (QUIZ_BASE_URL) {
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot-question?questionId=${id}`);
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot/question/${id}`);
-  }
-  return eps;
-}
-function finishUrls() {
-  const eps = [`${SELF_BASE}/api/chatbot/finish`];
-  if (QUIZ_BASE_URL) {
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot-finish`);
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot/finish`);
-  }
-  return eps;
-}
-function feedbackUrls() {
-  const eps = [`${SELF_BASE}/api/chatbot/feedback`];
-  if (QUIZ_BASE_URL) {
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot-feedback`);
-    eps.push(`${QUIZ_BASE_URL}/api/chatbot/feedback`);
-  }
-  return eps;
-}
-
-// "Examples" chips under questions
-function buildAnswerChips(options = []) {
-  const clean = (s = "") =>
-    String(s)
-      .replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\u200D]+/gu, "")
-      .replace(/^[0-9.\)\-\s]+/, "")
-      .replace(/\s{2,}/g, " ")
-      .trim();
-
-  const seen = new Set();
-  const labels = [];
-  for (const o of options) {
-    const raw = o?.text ?? o?.option_text ?? "";
-    const lbl = clean(raw);
-    if (!lbl) continue;
-    const key = lbl.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    labels.push(lbl);
-  }
-  if (!labels.length) return "";
-  return `<div style="margin-top:4px">
-    <span style="font-size:13px;color:#666;margin-right:8px">Examples:</span>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
-      ${labels.map(lbl => {
-        const htmlEscaped = lbl
-          .replace(/&/g, '&amp;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
-        const jsEscaped = lbl
-          .replace(/\\/g, '\\\\')
-          .replace(/'/g, "\\'")
-          .replace(/"/g, '\\"')
-          .replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-        return `<button type="button"
-          style="display:inline-block;padding:6px 10px;border:1px solid #ddd;border-radius:14px;background:#fff;cursor:pointer;font-size:13px;transition:all 0.2s;hover:background:#f5f5f5"
-          onmouseover="this.style.backgroundColor='#f5f5f5'"
-          onmouseout="this.style.backgroundColor='#fff'"
-          onclick="(function(){var b=document.getElementById('box');if(b){b.value='${jsEscaped}';var btn=document.getElementById('btn');if(btn)btn.click();}})()"
-        >${htmlEscaped}</button>`;
-      }).join("")}
-    </div>
-  </div>`;
-}
-
-// Render LLM markdown-ish as HTML
-function renderReplyHTML(text = "") {
-  const mdLink = (s) =>
-    s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, label, url) => {
-      const safe = url.replace(/"/g, "%22");
-      return `<a href="${safe}" target="_blank" rel="noreferrer">${label}</a>`;
-    });
-  const lines = String(text).split(/\r?\n/);
-  let html = [], listOpen = false, para = [];
-  const flushPara = () => { if (para.length) { html.push(`<p>${mdLink(para.join(" "))}</p>`); para = []; } };
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) { flushPara(); if (listOpen) { html.push("</ul>"); listOpen = false; } continue; }
-    if (/^([•\-\*]\s+)/.test(line)) {
-      flushPara(); if (!listOpen) { html.push("<ul>"); listOpen = true; }
-      html.push(`<li>${mdLink(line.replace(/^([•\-\*]\s+)/, "").trim())}</li>`);
-    } else para.push(line);
-  }
-  flushPara(); if (listOpen) html.push("</ul>");
-  return html.join("");
-}
-
-// QUIZ – conversational question (no numbered options; show chips)
-function renderQuestionHTML(q) {
-  const headline = (q.conversational_text || q.text || "").trim();
-  const chips = buildAnswerChips(q.options || []);
-  return `<div style="font-size:16px;margin:0 0 10px">${headline}</div>${chips}`;
-}
-
-// QUIZ – final profile (left)
-function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
-  const rec   = profile.recommendations || {};
-
-  const skill   = pickStr(profile.skillLevel, profile.skill);
-  the persona   = pickStr(profile.personality, profile.personality?.primary);
-
-  const style   = pickStr(rec.courseStyle);
-  const budget  = pickStr(rec.budgetLevel);
-  const amenities = Array.isArray(rec.amenities)
-    ? rec.amenities
-    : Array.isArray(rec.amenities?.essential) ? rec.amenities.essential : [];
-
-  const courses = Array.isArray(profile.matchedCourses) ? profile.matchedCourses : [];
-  const whyArr  = Array.isArray(rec.why) ? rec.why : (Array.isArray(profile.why) ? profile.why : []);
-  const prefs   = Array.isArray(profile.preferences?.core) ? profile.preferences.core : [];
-  const ml      = rec.mlInsights || profile.mlInsights || null;
-
-  const lines = [];
-  lines.push(`You've completed the quiz! Here's your profile:\n`);
-  lines.push(`Skill Level: ${skill}`);
-  lines.push(`Personality: ${persona}\n`);
-  lines.push(`Recommendations`);
-  lines.push(`• Style: ${style}`);
-  lines.push(`• Budget: ${budget}`);
-  if (amenities.length) { lines.push(`• Amenities:`); amenities.forEach(a => lines.push(`  • ${a}`)); }
-  if (whyArr.length)    { lines.push(`\nWhy`);        whyArr.forEach(w => lines.push(`• ${w}`)); }
-  if (ml) {
-    lines.push(`\nML Insights`);
-    if (ml.similarUserCount != null) lines.push(`• Based on ${ml.similarUserCount} similar golfers`);
-    if (ml.confidence)               lines.push(`• Model confidence: ${ml.confidence}`);
-    if (ml.dataQuality)              lines.push(`• Data quality: ${ml.dataQuality}`);
-  }
-  if (courses.length) {
-    lines.push(`\nMatched Courses`);
-    courses.slice(0,6).forEach(c => {
-      const name = pickStr(c.name, c.title, c.payload?.course_name, "Course");
-      const score = (typeof c.score === "number") ? ` – ${c.score.toFixed(3)}` : "";
-      lines.push(`• ${name}${score}`);
-    });
-  }
-  if (prefs.length) { lines.push(`\nYour Preferences`); prefs.forEach(p => lines.push(`• ${p}`)); }
-  return lines.join("\n");
-}
-
-function renderProfileSideCard(profile = {}, scores = {}) {
-  const rec     = profile.recommendations || {};
-  const skill   = pickStr(profile.skillLevel, profile.skill);
-  const persona = pickStr(profile.personality, profile.personality?.primary);
-
-  const prefs = Array.isArray(profile.preferences?.core) ? profile.preferences.core : [];
-
-  const matches = Array.isArray(profile.matchedCourses)
-    ? profile.matchedCourses.slice(0, 5)
-    : [];
-
-  const matchItems = matches.length
-    ? matches.map((m) => {
-        const name  = pickStr(m.name, m.title, m.payload?.course_name, "Course");
-        const href  = m.url || m.link || m.payload?.website || m.payload?.course_url || "";
-        const score = (typeof m.score === "number") ? ` – ${m.score.toFixed(3)}` : "";
-        return href
-          ? `• <a href="${href.replace(/"/g,"%22")}" target="_blank" rel="noreferrer">${name}</a>${score}`
-          : `• ${name}${score}`;
-      }).join("<br/>")
-    : "<span class='muted'>No matches yet.</span>";
-
-  const prefItems = prefs.length
-    ? prefs.slice(0, 6).map(p => `• ${p}`).join("<br/>")
-    : "<span class='muted'>No preferences yet.</span>";
-
-  return `
-    <div class="card">
-      <div style="font-weight:700;margin-bottom:6px">Your Golf Profile</div>
-      <div><strong>Skill</strong>: ${skill}</div>
-      <div><strong>Personality</strong>: ${persona}</div>
-      <div style="margin-top:10px"><strong>Top matches</strong><br/>${matchItems}</div>
-      <div style="margin-top:10px"><strong>Your Preferences</strong><br/>${prefItems}</div>
-    </div>
-  `;
-}
-
-// Rephrase question (only if API didn't provide conversational_text)
-async function rephraseQuestionLLM(q) {
-  try {
-    const opts = (q.options || []).map(o => o.text || o.option_text).filter(Boolean).slice(0, 8);
-    const sys = `You are a friendly golf buddy. Rephrase the question as ONE short, natural line. Do NOT list options or numbers.`;
-    const user = `Question: "${q.text || q.question_text || ""}"\nOptions (do not show): ${opts.join(" | ")}`;
-    const r = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "system", content: sys }, { role: "user", content: user }],
-      temperature: 0.4, max_tokens: 60
-    });
-    return (r.choices[0]?.message?.content || "").trim() || q.text || q.question_text || "";
-  } catch { return q.text || q.question_text || ""; }
-}
-
-// Classify free-text → optionIndex
-async function classifyFreeTextToIndexLLM(q, freeText) {
-  try {
-    const options = (q.options || []).map((o, i) => ({
-      index: (o.index ?? o.option_index ?? i),
-      text: (o.text ?? o.option_text ?? "").toLowerCase().trim(),
-      emoji: o.emoji || ""
-    }));
-
-    const userInput = freeText.toLowerCase().trim();
-
-    const numberMatch = userInput.match(/^\d+$/);
-    if (numberMatch && options.some(o => o.index === Number(numberMatch[0]))) {
-      return Number(numberMatch[0]);
-    }
-
-    for (const opt of options) {
-      const cleanOption = opt.text.replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\u200D]+/gu, "").trim();
-      if (userInput === cleanOption) return opt.index;
-      if (cleanOption && userInput.includes(cleanOption)) return opt.index;
-      if (cleanOption && cleanOption.includes(userInput) && userInput.length > 3) return opt.index;
-    }
-
-    const sys = `You are classifying a golfer's response to a multiple choice question.
-Match their response to the BEST fitting option index.
-Return ONLY a JSON object: {"optionIndex": <number>}`;
-
-    const user = `Question: ${q.conversational_text || q.text || q.question_text || ""}
-Options:
-${options.map(o => `${o.index}: ${o.text}`).join("\n")}
-
-User's response: "${freeText}"
-
-Which option index best matches their response?`;
-
-    const r = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: sys },
-        { role: "user", content: user }
-      ],
-      temperature: 0.1,
-      max_tokens: 40
-    });
-
-    const out = (r.choices[0]?.message?.content || "").trim();
-    const m = out.match(/"optionIndex"\s*:\s*(\d+)/i);
-    if (m) {
-      const idx = Number(m[1]);
-      if (options.some(o => o.index === idx)) return idx;
-    }
-    return options[0]?.index ?? 0;
-
-  } catch (error) {
-    console.error("Classification error:", error);
-    return 0;
-  }
-}
-
-// Voyage re-rank (fail-open)
-async function voyageRerank(query, hits, topN = 40) {
-  try {
-    if (!VOYAGE_API_KEY || !hits?.length) return hits;
-    const url = "https://api.voyageai.com/v1/rerank";
-    const documents = hits.map(h => {
-      const t = (h?.payload?.title || h?.payload?.h1 || "").toString();
-      const x = (h?.payload?.text  || "").toString();
-      return (t && x) ? `${t}\n\n${x}` : (t || x) || "";
-    });
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${VOYAGE_API_KEY}` },
-      body: JSON.stringify({ model: VOYAGE_RERANK_MODEL, query, documents, top_n: Math.min(topN, documents.length) })
-    });
-    if (!r.ok) return hits;
-    const data = await r.json();
-    const order = (data?.data || []).map(d => ({ idx: d.index, score: d.relevance_score }));
-    if (!order.length) return hits;
-    const byIdx = new Map(order.map(o => [o.idx, o.score]));
-    return hits.map((h,i)=>({ ...h, _voy: byIdx.has(i) ? byIdx.get(i) : -1e9 }))
-               .sort((a,b)=>b._voy - a._voy)
-               .map(({_voy, ...h}) => h);
-  } catch { return hits; }
-}
-
-// Embeddings + site retrieval
-async function embedQuery(q) {
-  const { data } = await openai.embeddings.create({ model: "text-embedding-3-small", input: q });
-  return data[0].embedding;
-}
-async function retrieveSite(question, topK = 120) {
-  const vector = await embedQuery(question);
-  const body = {
-    vector, limit: topK, with_payload: true, with_vectors: false,
-    ...(SITE_VECTOR_NAME ? { using: SITE_VECTOR_NAME } : {}),
-  };
-  const results = await qdrant.search(QDRANT_COLL, body);
-  return results || [];
-}
-function isCourseURL(h) { return ((h?.payload?.url || "").toLowerCase()).includes("/courses/"); }
-
-// ──────────────────────────────────────────────────────────────────────────
-app.get("/", (req, res) => {
-  const html = `
-<!DOCTYPE html>
+// Main chat interface
+app.get("/", (_req, res) => {
+  res.type("html").send(`<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OpenAI Chatbot</title>
-  <style>
-    body{font-family:system-ui,-apple-system,sans-serif;background:#fafafa;color:#222;margin:0}
-    .container{display:grid;grid-template-columns:2fr 1fr;gap:24px;max-width:1200px;margin:24px auto;padding:0 16px}
-    .card{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:16px}
-    .row{display:flex;gap:8px}
-    textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px}
-    button{padding:10px 14px;border-radius:10px;border:1px solid #0a7;cursor:pointer}
-    .msg{padding:10px 12px;border-radius:10px;margin:8px 0}.me{background:#e9f7ff}.bot{background:#f7f7f7}
-    .muted{color:#777}
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Golf Course Assistant</title>
+<style>
+  :root{--bg:#fafafa;--fg:#222;--muted:#777;--card:#fff;--border:#e5e5e5;--accent:#0a7}
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
+  .wrap{max-width:1100px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:2fr 1fr;gap:24px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+  .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  h1{margin:0}
+  .reset-btn{padding:6px 12px;border:1px solid #dc3545;background:#fff;color:#dc3545;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500}
+  .reset-btn:hover{background:#dc3545;color:white}
+  .muted{color:var(--muted)}
+  .row{display:flex;gap:8px;margin-top:10px}
+  textarea{width:100%;min-height:60px;padding:12px;border:1px solid var(--border);border-radius:10px;resize:vertical}
+  button{padding:10px 14px;border-radius:10px;border:1px solid var(--accent);background:#fff;color:var(--accent);cursor:pointer}
+  button:hover{background:#f2fffb}
+  .msg{padding:10px 12px;border-radius:10px;margin:8px 0;white-space:pre-wrap}
+  .me{background:#e9f7ff}
+  .bot{background:#f7f7f7}
+  .status{padding:8px;margin:8px 0;border-radius:6px;font-size:14px}
+  .status.error{background:#ffe6e6;color:#d32f2f}
+  .status.success{background:#e8f5e8;color:#2e7d32}
+</style>
 </head>
 <body>
-  <div class="container">
+  <div class="wrap">
     <div class="card">
-      <h1>OpenAI Chatbot</h1>
-      <div class="muted">Try: best courses near boston or start for quiz</div>
+      <div class="header">
+        <h1>Golf Course Assistant</h1>
+        <button class="reset-btn" onclick="resetSession()">Reset Session</button>
+      </div>
+      <div class="muted">Type <code>start</code> to begin the quiz, or ask for courses.</div>
       <div id="log"></div>
       <div class="row">
-        <textarea id="box" rows="2" placeholder="Type a message"></textarea>
+        <textarea id="box" placeholder="Type a message…"></textarea>
         <button id="btn">Send</button>
       </div>
     </div>
     <div class="card">
-      <h2>Related</h2>
-      <div id="side" class="muted">No related info.</div>
+      <h2 style="margin-top:0">Debug Info</h2>
+      <div id="side" class="muted">Loading status...</div>
     </div>
   </div>
-  <script>
-    const log=document.getElementById("log"),box=document.getElementById("box"),btn=document.getElementById("btn"),side=document.getElementById("side");
-    function render(html,isMe){const d=document.createElement("div");d.className="msg "+(isMe?"me":"bot");d.innerHTML=html;log.appendChild(d);log.scrollTop=log.scrollHeight;}
-    async function sendMessage(){const text=box.value.trim();if(!text)return;render("<strong>You:</strong><br>"+text,true);box.value="";
-      let j=null;try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{role:"user",content:text}]})});j=await r.json();render(j.html||"I do not have that in the site content.",false);}catch(e){render("Error: "+(e.message||e),false);}
-      if(j&&typeof j.sideHtml==="string"&&j.sideHtml.length){side.innerHTML=j.sideHtml;}else if(!j||!j.suppressSidecar){try{const r2=await fetch("/api/sidecar?q="+encodeURIComponent(text));const p=await r2.json();side.innerHTML=p.html||"<div class=\\"card\\">No related info.</div>";}catch(e){side.innerHTML="<div class=\\"card\\">No related info.</div>";}}}
-    btn.addEventListener("click",sendMessage);box.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}});window.addEventListener("load",()=>box.focus());
-  </script>
+
+<script>
+  const log  = document.getElementById('log');
+  const box  = document.getElementById('box');
+  const btn  = document.getElementById('btn');
+  const side = document.getElementById('side');
+
+  function render(html, mine){
+    const d = document.createElement('div');
+    d.className = 'msg ' + (mine ? 'me' : 'bot');
+    d.innerHTML = html;
+    log.appendChild(d);
+    d.scrollIntoView({behavior:'smooth',block:'end'});
+  }
+
+  async function sendMessage(){
+    const text = (box.value || '').trim();
+    if(!text) return;
+    render('<strong>You:</strong>\\n' + text, true);
+    box.value = '';
+
+    try{
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ messages: [{ role: 'user', content: text }] })
+      });
+      const j = await r.json();
+      render(j.html || 'I do not have that in the site content.', false);
+
+      // Update debug info if provided
+      if (j.debug) {
+        side.innerHTML = '<div class="status ' + (j.debug.error ? 'error' : 'success') + '">' +
+                        JSON.stringify(j.debug, null, 2) + '</div>';
+      }
+    }catch(e){
+      render('Error: ' + (e.message || e), false);
+    }
+  }
+
+  async function resetSession(){
+    if(confirm('Reset session and clear all cookies? This will start a fresh quiz session.')){
+      // Clear server-side sessions first
+      try {
+        await fetch('/api/reset-session', { method: 'POST' });
+      } catch (e) {
+        console.log('Could not clear server sessions:', e);
+      }
+
+      // Clear all cookies
+      document.cookie.split(";").forEach(function(c) {
+        document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
+      });
+
+      // Clear chat log
+      log.innerHTML = '';
+
+      // Show confirmation
+      render('Session reset! Server and browser cleared. Type "start" to begin a new quiz.', false);
+
+      // Refresh debug info
+      setTimeout(loadStatus, 100);
+    }
+  }
+
+  async function loadStatus() {
+    try {
+      const r = await fetch('/api/debug/status');
+      const status = await r.json();
+      side.innerHTML = '<pre>' + JSON.stringify(status, null, 2) + '</pre>';
+    } catch (e) {
+      side.innerHTML = '<div class="status error">Could not load status</div>';
+    }
+  }
+
+  btn.addEventListener('click', sendMessage);
+  box.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' && !e.shiftKey){
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // Load initial status
+  window.addEventListener('load', () => {
+    box.focus();
+    loadStatus();
+  });
+</script>
 </body>
-</html>`;
-  res.send(html);
+</html>`);
 });
 
-// ──────────────────────────────────────────────────────────────────────────
-// Sessions + proxy router (to your remote quiz app)
-const SESS = new Map();
-function getSid(req, res) {
-  const cookie = req.headers.cookie || "";
-  const m = /sid=([A-Za-z0-9_-]+)/.exec(cookie);
-  if (m) return m[1];
-  const sid = Math.random().toString(36).slice(2);
-  res.setHeader("Set-Cookie", `sid=${sid}; Path=/; HttpOnly; SameSite=Lax`);
-  return sid;
-}
-function getUid(req, res) {
-  const cookie = req.headers.cookie || "";
-  const m = /uid=([A-Za-z0-9_-]+)/.exec(cookie);
-  if (m) return m[1];
-  const uid = Math.random().toString(36).slice(2);
-  res.setHeader("Set-Cookie", `uid=${uid}; Path=/; HttpOnly; SameSite=Lax`);
-  return uid;
-}
-app.use("/api/chatbot", chatbotRouter);
+// Mount chat routes
+app.use("/api", chatRouter);
 
-// ──────────────────────────────────────────────────────────────────────────
-// Chat endpoint (quiz is explicit opt-in; RAG is default)
-app.post("/api/chat", async (req, res) => {
+// ── Profile API Routes ─────────────────────────────────────────────────
+app.post("/api/profile-session-start", async (req, res) => {
   try {
-    const sid = getSid(req, res);
-    const uid = getUid(req, res);
-    const state = SESS.get(sid) || newChatState();
-    const { messages = [] } = req.body || {};
-    const lastUser = [...messages].reverse().find(m => m.role === "user")?.content?.trim() || "";
-    const intent = lastUser.trim().toLowerCase();
-    const isStartCmd = (intent === "start" || intent === "start quiz");
+    const { user_id, session_id, seed } = req.body;
+    console.log('Starting session:', { user_id, session_id });
 
-    // cancel/exit
-    if (/^\s*(cancel|stop|exit|end)\s*(quiz)?\s*$/i.test(lastUser)) {
-      SESS.set(sid, newChatState());
-      return res.json({ html: "Got it – I've exited the quiz. Ask anything or type 'start' to begin again." });
-    }
-
-    // RAG path by default
-    if (state.mode !== "quiz" && !isStartCmd) {
-      const locForQuery = extractLocation(lastUser);
-      const variants = [
-        lastUser, lastUser.toLowerCase(), lastUser.replace(/[^\w\s]/g, " "),
-        ...(locForQuery ? [`golf courses in ${locForQuery}`, `${locForQuery} golf courses`, `courses near ${locForQuery}`] : [])
-      ].filter(Boolean);
-
-      let siteHits = [];
-      for (const v of variants) {
-        const hits = await retrieveSite(v, 120);
-        siteHits = [...siteHits, ...(hits || [])];
-        if (siteHits.length >= 120) break;
-      }
-      siteHits = await voyageRerank(lastUser, siteHits, 40);
-
-      // dedupe by url#chunk
-      const seen = new Set();
-      siteHits = siteHits.filter(h => {
-        const key = `${h.payload?.url}#${h.payload?.chunk_index ?? "html"}`;
-        if (seen.has(key)) return false; seen.add(key); return true;
+    const { data, error } = await supabase
+      .from('user_session')
+      .insert({
+        user_id,
+        session_id,
+        answers: {},
+        scores: {},
+        progress: seed || {}
       });
 
-      // lexical boost
-      const qlen = lastUser.split(/\s+/).filter(Boolean).length;
-      const dynamicThreshold = 0.06 + Math.min(0.12, qlen * 0.01);
-      const tokens = normalizeText(lastUser).split(/\s+/).filter(t => t && t.length > 2);
-      function lexBoost(h) {
-        const hay = normalizeText((h?.payload?.title || "") + " " + (h?.payload?.text || ""));
-        let k = 0; for (const t of tokens) if (hay.includes(t)) k++; return k;
-      }
-      const goodSite = siteHits
-        .filter(h => (h?.score ?? 0) >= dynamicThreshold)
-        .map(h => ({ ...h, _lex: lexBoost(h) }))
-        .sort((a,b)=> (b.score + 0.03*b._lex) - (a.score + 0.03*a._lex));
-
-      // keep top unique URLs
-      const keep = new Map();
-      for (const h of goodSite.slice(0, 20)) {
-        const key = h.payload?.url || ""; if (!keep.has(key)) keep.set(key, h);
-      }
-      let finalHits = [...keep.values()];
-      if (isListIntent(lastUser)) {
-        const courses  = finalHits.filter(isCourseURL);
-        const articles = finalHits.filter(h => !isCourseURL(h));
-        finalHits = [...courses, ...articles].slice(0, 12);
-      } else {
-        finalHits = finalHits.slice(0, 10);
-      }
-
-      const MAX_CHARS = 12000;
-      let context = "", links = [];
-      for (let i=0;i<finalHits.length;i++){
-        const h = finalHits[i];
-        const url = h.payload?.url || "";
-        const title = h.payload?.title || h.payload?.h1 || "";
-        const txt = (h.payload?.text || "").slice(0, 1400);
-        const block = `[${i+1}] ${url}\n${title ? (title + "\n") : ""}${txt}\n---\n`;
-        if ((context.length + block.length) > MAX_CHARS) break;
-        context += block; links.push(url);
-      }
-
-      let systemContent = `You are a friendly golf buddy who knows course details from the site context.
-      Your tone should be conversational but accurate and evidence-bound.
-      Rules:
-      - Base everything ONLY on the Site Context. No guessing.
-      - Keep answers short (2–4 sentences).
-      - Use citations like [n] for facts.
-      - If nothing relevant is in context, say: "${REFUSAL}".
-      # Site Context (cite with [n])
-      ${context}`;
-      if (isListIntent(lastUser)) {
-        systemContent = `You are a friendly golf buddy. The user wants a LIST of course recommendations.
-        - Use ONLY items in the Site Context; prefer course pages over articles.
-        - Bullet 5–10 courses: • [Course Name](URL) – 1 short reason [n]
-        - If fewer than 5, show what you have.
-        # Site Context
-        ${context}`;
-      }
-
-      let reply = "";
-      try {
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: [{ role: "system", content: systemContent }, ...messages.filter(m => m.role === "user")],
-          temperature: 0.3, max_tokens: 450,
-        });
-        reply = (completion.choices[0]?.message?.content || "").trim();
-      } catch (e) { console.warn("OpenAI summarize failed:", e?.message || e); reply = ""; }
-
-      const allLinks = [...new Set(links)];
-      if (!reply && !allLinks.length) return res.json({ html: REFUSAL });
-
-      const sections = [];
-      if (reply && reply !== REFUSAL) sections.push(renderReplyHTML(reply));
-      else sections.push("Here are relevant pages on our site:");
-      if (allLinks.length) {
-        sections.push("<strong>Sources</strong><br/>" + allLinks.map(u => "• " + anchor(u)).join("<br/>"));
-        SESS.set(sid, { ...state, lastLinks: allLinks.slice(0,12) });
-      } else {
-        SESS.set(sid, { ...state, lastLinks: [] });
-      }
-      return res.json({ html: sections.join("<br/><br/>") });
+    if (error) {
+      console.error('Supabase error:', error);
+      throw error;
     }
 
-    // ── QUIZ: start
-    if (isStartCmd) {
-      const urls = startUrls();
-      const data = await tryFetchJson(urls, { method: "POST", body: JSON.stringify({}) });
-
-      if (!data) {
-        SESS.set(sid, newChatState());
-        return res.json({
-          html: "Sorry, I couldn't start the quiz right now. Please try again or ask me about golf courses directly."
-        });
-      }
-
-      // Collect location first
-      if (data.needsLocation) {
-        state.mode = "quiz";
-        state.sessionId = data.sessionId;
-        state.needsLocation = true;
-        SESS.set(sid, state);
-
-        return res.json({
-          html: `
-            <div style="font-size:16px;margin:0 0 10px">Where are you looking for golf courses?</div>
-            <div style="margin:10px 0">
-              <input type="text" id="zipcode" placeholder="Enter ZIP code (e.g., 02134)"
-                     style="padding:8px;border:1px solid #ddd;border-radius:6px;width:150px;margin-right:8px">
-              <select id="radius" style="padding:8px;border:1px solid #ddd;border-radius:6px">
-                <option value="10">Within 10 miles</option>
-                <option value="25" selected>Within 25 miles</option>
-                <option value="50">Within 50 miles</option>
-                <option value="100">Within 100 miles</option>
-                <option value="9999">Anywhere</option>
-              </select>
-              <button onclick="(function(){
-                var zip = document.getElementById('zipcode').value;
-                var radius = document.getElementById('radius').value;
-                var box = document.getElementById('box');
-                if(box) { box.value = 'LOCATION:' + zip + ':' + radius; document.getElementById('btn').click(); }
-              })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">
-                Continue
-              </button>
-            </div>
-            <div style="margin-top:8px;font-size:12px;color:#666">
-              Leave ZIP blank to see courses everywhere
-            </div>
-          `,
-          suppressSidecar: true
-        });
-      }
-
-      // Legacy: if API returns first question directly
-      if (data.question) {
-        state.mode = "quiz";
-        state.sessionId = data.sessionId;
-        state.question  = data.question || null;
-        state.answers   = {};
-        state.scores    = {};
-        state.lastLinks = [];
-
-        if (!Array.isArray(state.question.options) || !state.question.options.length) {
-          const urlsQ = questionUrls(state.question.id);
-          const qd = await tryFetchJson(urlsQ, { method: "GET" });
-          if (qd && qd.options) state.question.options = qd.options;
-        }
-        if (!state.question.conversational_text) {
-          state.question.conversational_text = await rephraseQuestionLLM(state.question);
-        }
-
-        SESS.set(sid, state);
-        return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
-      }
-    }
-
-    // ── QUIZ: Handle location submission -> ask WHEN next
-    if (state.mode === "quiz" && state.needsLocation && lastUser.startsWith("LOCATION:")) {
-      const parts = lastUser.split(":");
-      const zipCode = parts[1]?.trim() || "";
-      const radius = parseInt(parts[2]) || 25;
-
-      let locationData = { zipCode, radius, coords: null };
-
-      if (zipCode) {
-        try {
-          const geoResponse = await fetch(`https://api.zippopotam.us/us/${zipCode}`);
-          if (geoResponse.ok) {
-            const geoData = await geoResponse.json();
-            if (geoData.places && geoData.places.length > 0) {
-              locationData.coords = {
-                lat: parseFloat(geoData.places[0].latitude),
-                lon: parseFloat(geoData.places[0].longitude)
-              };
-              locationData.city = geoData.places[0]['place name'];
-              locationData.state = geoData.places[0]['state abbreviation'];
-            }
-          }
-        } catch (e) {
-          console.error("Geocoding error:", e);
-        }
-      }
-
-      state.location = locationData;
-      state.needsLocation = false;
-      state.needsWhen = true;
-      state.answers = {};
-      state.scores  = {};
-      SESS.set(sid, state);
-
-      // Call profile API to upsert location
-      await callProfileAPI("/api/profile/location", {
-        user_id: getUid(req, res), // uid cookie
-        city: state.location?.city,
-        lat: state.location?.coords?.lat,
-        lon: state.location?.coords?.lon,
-        radius_km: state.location?.radius
-      });
-
-      // Ask WHEN
-      return res.json({
-        html: `
-          <div style="font-size:16px;margin:0 0 10px">Great — now when do you want to play?</div>
-          <div style="margin:10px 0">
-            <input type="text" id="dateFrom" placeholder="Start date (YYYY-MM-DD)" style="padding:8px;border:1px solid #ddd;border-radius:6px;width:180px;margin-right:8px">
-            <input type="text" id="dateTo" placeholder="End date (YYYY-MM-DD)" style="padding:8px;border:1px solid #ddd;border-radius:6px;width:180px;margin-right:8px">
-            <select id="bucket" style="padding:8px;border:1px solid #ddd;border-radius:6px">
-              <option value="">(optional) Time window</option>
-              <option value="weekend_mornings">Weekend mornings</option>
-              <option value="weekend_afternoons">Weekend afternoons</option>
-              <option value="weekdays">Weekdays</option>
-            </select>
-            <button onclick="(function(){
-              var from = document.getElementById('dateFrom').value.trim();
-              var to = document.getElementById('dateTo').value.trim();
-              var b = document.getElementById('bucket').value.trim();
-              var box = document.getElementById('box');
-              if (box) { box.value = 'WHEN:' + (from||'') + ':' + (to||'') + ':' + (b||''); document.getElementById('btn').click(); }
-            })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">
-              Continue
-            </button>
-          </div>
-          <div style="margin-top:8px;font-size:12px;color:#666">
-            You can also type: WHEN:2025-10-01:2025-10-15 or WHEN:: :weekend_mornings
-          </div>
-        `,
-        suppressSidecar: true
-      });
-    }
-
-    // ── QUIZ: Handle WHEN submission, then start quiz
-    if (state.mode === "quiz" && state.needsWhen && lastUser.startsWith("WHEN:")) {
-      const parts = lastUser.split(":"); // ["WHEN", from, to, bucket]
-      const from = (parts[1] || "").trim();
-      const to   = (parts[2] || "").trim();
-      const bucket = (parts[3] || "").trim();
-
-      state.needsWhen = false;
-      state.availability = {};
-      if (from)   state.availability.from = from;
-      if (to)     state.availability.to   = to;
-      if (bucket) state.availability.bucket = bucket;
-      SESS.set(sid, state);
-
-      // Upsert availability via profile API
-      await callProfileAPI("/api/profile/availability", {
-        user_id: getUid(req, res),
-        from: state.availability?.from,
-        to: state.availability?.to,
-        bucket: state.availability?.bucket
-      });
-
-      // Start quiz now that we have WHERE/WHEN
-      const urls = startUrls();
-      const startData = await tryFetchJson(urls, {
-        method: "POST",
-        body: JSON.stringify({
-          skipLocation: true,
-          sessionId: state.sessionId,
-          availability: state.availability
-        })
-      });
-
-      if (!startData || !startData.question) {
-        SESS.set(sid, newChatState());
-        return res.json({ html: "Sorry, I couldn't start the quiz. Please try again." });
-      }
-
-      state.question = startData.question;
-
-      if (!Array.isArray(state.question.options) || !state.question.options.length) {
-        const urlsQ = questionUrls(state.question.id);
-        const qd = await tryFetchJson(urlsQ, { method: "GET" });
-        if (qd && qd.options) state.question.options = qd.options;
-      }
-      if (!state.question.conversational_text) {
-        state.question.conversational_text = await rephraseQuestionLLM(state.question);
-      }
-
-      SESS.set(sid, state);
-      return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
-    }
-
-    // ── QUIZ: numeric pick
-    const pickOnly = lastUser.match(/^(?:pick|answer|option)?\s*(\d+)\s*$/i);
-    if (pickOnly && state.mode === "quiz" && state.sessionId && state.question?.id) {
-      const idx = Number(pickOnly[1]);
-
-      const urls = answerUrls();
-      const data = await tryFetchJson(urls, {
-        method: "POST",
-        body: JSON.stringify({
-          sessionId:      state.sessionId,
-          questionId:     state.question.id,
-          optionIndex:    idx,
-          currentAnswers: state.answers,
-          currentScores:  state.scores,
-          location:       state.location,
-          availability:   state.availability
-        })
-      });
-
-      if (!data) return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
-
-      if (data.complete) {
-        state.mode = null; state.question = null; SESS.set(sid, state);
-        const html = renderFinalProfileHTML(data.profile, data.scores, data.totalQuestions).replace(/\n/g,"<br/>");
-        const sideHtml = renderProfileSideCard(data.profile, data.scores);
-        return res.json({ html, sideHtml });
-      }
-
-      if (data.question) {
-        state.answers = data.currentAnswers || state.answers;
-        state.scores  = data.currentScores  || state.scores;
-        state.question = data.question;
-
-        if (!state.question.conversational_text) {
-          state.question.conversational_text = await rephraseQuestionLLM(state.question);
-        }
-
-        SESS.set(sid, state);
-        return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
-      }
-      return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
-    }
-
-    // ── QUIZ: free-text → classify → post
-    if (state.mode === "quiz" && state.sessionId && state.question?.id) {
-      if (!Array.isArray(state.question.options) || !state.question.options.length) {
-        const urlsQ = questionUrls(state.question.id);
-        const qd = await tryFetchJson(urlsQ, { method: "GET" });
-        if (qd && qd.options) state.question.options = qd.options;
-      }
-
-      const idx = await classifyFreeTextToIndexLLM(state.question, lastUser);
-      if (Number.isNaN(idx)) {
-        return res.json({ html: `Hmm, I didn't catch that – try a phrase like "well-maintained", or type "pick 1".` });
-      }
-
-      const urls = answerUrls();
-      const data = await tryFetchJson(urls, {
-        method: "POST",
-        body: JSON.stringify({
-          sessionId:      state.sessionId,
-          questionId:     state.question.id,
-          optionIndex:    idx,
-          currentAnswers: state.answers,
-          currentScores:  state.scores,
-          location:       state.location,
-          availability:   state.availability
-        })
-      });
-
-      if (!data) return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
-
-      if (data.complete) {
-        state.mode = null; state.question = null; SESS.set(sid, state);
-        const html = renderFinalProfileHTML(data.profile, data.scores, data.totalQuestions).replace(/\n/g,"<br/>");
-        const sideHtml = renderProfileSideCard(data.profile, data.scores);
-        return res.json({ html, sideHtml });
-      }
-
-      if (data.question) {
-        state.answers = data.currentAnswers || state.answers;
-        state.scores  = data.currentScores  || state.scores;
-        state.question = data.question;
-
-        if (!state.question.conversational_text) {
-          state.question.conversational_text = await rephraseQuestionLLM(state.question);
-        }
-
-        SESS.set(sid, state);
-        return res.json({ html: renderQuestionHTML(state.question), suppressSidecar: true });
-      }
-      return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
-    }
-
-    // default
-    return res.json({ html: "Tell me what you're looking for – try \"courses in Wayland\" or type \"start\" to begin the quiz." });
-
-  } catch (e) {
-    console.error("chat error:", e);
-    return res.status(500).json({ error: String(e) });
+    console.log('Session started successfully:', { user_id, session_id });
+    res.json({ ok: true, data });
+  } catch (error) {
+    console.error('Failed to start session:', error);
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 
-// ──────────────────────────────────────────────────────────────────────────
-// Sidecar GET/POST
-app.get("/api/sidecar", async (req, res) => {
+app.post("/api/profile-location", async (req, res) => {
   try {
-    const q = (req.query.q || req.query.text || "").toString();
-    const html = await buildSidecar(q); return res.json({ html });
-  } catch (e) { return res.json({ html: "" }); }
-});
-app.post("/api/sidecar", async (req, res) => {
-  try {
-    const q = (req.body?.q || req.body?.text || "").toString();
-    const html = await buildSidecar(q); return res.json({ html });
-  } catch (e) { return res.json({ html: "" }); }
-});
+    const { user_id, city, lat, lon, radius_km } = req.body;
+    console.log('Saving location:', { user_id, city, lat, lon, radius_km });
 
-async function buildSidecar(q) {
-  try {
-    const loc = extractLocation(q || "");
-    if (!loc) return "";
-    const geo = await (await fetch(`https://geocode.maps.co/search?q=${encodeURIComponent(loc)}&format=json`, { headers: { "User-Agent": "totalguide-chat/1.0" } })).json().catch(()=>[]);
-    if (!Array.isArray(geo) || !geo.length) return "";
-    const best = geo.find(x => /United States|USA|Massachusetts|MA/i.test(x.display_name)) || geo[0];
-    const lat = Number(best.lat), lon = Number(best.lon);
-    const wx = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`)).json().catch(()=>null);
-    if (!wx || !wx.current_weather) return "";
-    const d = wx.daily || {}, time = d.time || [], tmax = d.temperature_2m_max || [], tmin = d.temperature_2m_min || [], prec = d.precipitation_sum || [];
-    let rows = ""; for (let i=0;i<Math.min(time.length,3);i++) rows += `<div style="display:flex;justify-content:space-between;border-top:1px solid #eee;padding:6px 0"><span>${time[i]??""}</span><span>${tmin[i]??""}–${tmax[i]??""}°</span><span>${prec[i]??0}mm</span></div>`;
-    return `<div class="card"><div style="font-weight:600;margin-bottom:6px">Weather – ${best.display_name}</div><div>Now: ${wx.current_weather.temperature ?? "–"}°C, wind ${wx.current_weather.windspeed ?? "–"} km/h</div><div style="margin-top:8px;font-weight:600">Next days</div>${rows || '<div>No forecast.</div>'}<div style="margin-top:10px;font-size:12px;color:#666">Source: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a></div></div>`;
-  } catch { return ""; }
-}
+    const { data, error } = await supabase
+      .from('user_profile')
+      .upsert({
+        user_id,
+        home_city: city,
+        home_lat: lat,
+        home_lon: lon,
+        travel_radius_km: radius_km,
+        profile_updated_at: new Date().toISOString()
+      });
 
-// ──────────────────────────────────────────────────────────────────────────
-// Health & debug
-app.get("/api/ping", (_, res) => res.json({ ok: true }));
-app.get("/api/debug/site-top", async (req, res) => {
-  try {
-    const q = (req.query.q || "wayland").toString();
-    const { data } = await openai.embeddings.create({ model: "text-embedding-3-small", input: q });
-    const vector = data[0].embedding;
-    const body = { vector, limit: 10, with_payload: true, with_vectors: false,
-                   ...(SITE_VECTOR_NAME ? { using: SITE_VECTOR_NAME } : {}) };
-    const results = await qdrant.search(QDRANT_COLL, body);
-    const out = (results || []).map(r => ({
-      score: r.score, url: r.payload?.url, title: r.payload?.title,
-      preview: (r.payload?.text || "").slice(0,160)
-    }));
-    res.json({ q, collection: QDRANT_COLL, using: SITE_VECTOR_NAME || "(default)", out });
-  } catch (e) { res.status(500).json({ error: String(e) }); }
+    if (error) {
+      console.error('Supabase error:', error);
+      throw error;
+    }
+
+    console.log('Location saved successfully:', { user_id, city });
+    res.json({ ok: true, data });
+  } catch (error) {
+    console.error('Failed to save location:', error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
-app.listen(PORT, () => console.log("Server listening on", PORT));
+app.post("/api/profile-availability", async (req, res) => {
+  try {
+    const { user_id, from, to, bucket } = req.body;
+    const availability = { from, to, bucket };
+    console.log('Saving availability:', { user_id, availability });
+
+    const { data, error } = await supabase
+      .from('user_profile')
+      .upsert({
+        user_id,
+        availability_windows: [availability],
+        profile_updated_at: new Date().toISOString()
+      });
+
+    if (error) {
+      console.error('Supabase error:', error);
+      throw error;
+    }
+
+    console.log('Availability saved successfully:', { user_id, availability });
+    res.json({ ok: true, data });
+  } catch (error) {
+    console.error('Failed to save availability:', error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/api/profile-session-progress", async (req, res) => {
+  try {
+    const { user_id, session_id, answers, scores, answered_id } = req.body;
+    console.log('Saving session progress:', { user_id, session_id, answered_id });
+
+    // First, get current session to append to question_sequence
+    const { data: currentSession, error: fetchError } = await supabase
+      .from('user_session')
+      .select('question_sequence')
+      .eq('user_id', user_id)
+      .eq('session_id', session_id)
+      .single();
+
+    if (fetchError) {
+      console.error('Error fetching current session:', fetchError);
+    }
+
+    const currentSequence = currentSession?.question_sequence || [];
+    const updatedSequence = [...currentSequence, answered_id];
+
+    const { data, error } = await supabase
+      .from('user_session')
+      .update({
+        answers,
+        scores,
+        question_sequence: updatedSequence,
+        progress: { last_answered_question: answered_id },
+        last_seen_at: new Date().toISOString()
+      })
+      .eq('user_id', user_id)
+      .eq('session_id', session_id);
+
+    if (error) {
+      console.error('Supabase error:', error);
+      throw error;
+    }
+
+    console.log('Session progress saved successfully:', { user_id, session_id, answered_id, sequence_length: updatedSequence.length });
+    res.json({ ok: true, data });
+  } catch (error) {
+    console.error('Failed to save session progress:', error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// Test endpoint for profile API
+app.post("/api/ping", (req, res) => {
+  res.json({ ok: true, message: "Profile API is working", timestamp: new Date().toISOString() });
+});
+
+// ── Debug endpoints ────────────────────────────────────────────────────
+app.get("/api/debug/status", async (req, res) => {
+  const status = {
+    openai: !!process.env.OPENAI_API_KEY,
+    qdrant_site: !!siteQdrant,
+    qdrant_course: !!courseQdrant,
+    supabase: !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
+    profile_api: true, // Now it's built-in
+    env_vars: {
+      QDRANT_URL: !!process.env.QDRANT_URL,
+      COURSE_QDRANT_URL: !!process.env.COURSE_QDRANT_URL,
+      QDRANT_COLLECTION: process.env.QDRANT_COLLECTION || "not set",
+      SUPABASE_URL: !!process.env.SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      NODE_ENV: process.env.NODE_ENV || "development"
+    }
+  };
+  res.json(status);
+});
+
+app.get("/api/debug/qdrant", async (req, res) => {
+  const results = {};
+
+  try {
+    if (siteQdrant) {
+      const siteInfo = await siteQdrant.getCollection(process.env.QDRANT_COLLECTION || "site_docs");
+      results.site_docs = { status: "connected", info: siteInfo };
+    } else {
+      results.site_docs = { status: "disabled", error: "QDRANT_URL not configured" };
+    }
+  } catch (e) {
+    results.site_docs = { status: "failed", error: e.message };
+  }
+
+  try {
+    if (courseQdrant) {
+      const courseInfo = await courseQdrant.getCollection(process.env.COURSE_COLLECTION || "courses");
+      results.courses = { status: "connected", info: courseInfo };
+    } else {
+      results.courses = { status: "disabled", error: "COURSE_QDRANT_URL not configured" };
+    }
+  } catch (e) {
+    results.courses = { status: "failed", error: e.message };
+  }
+
+  res.json(results);
+});
+
+app.get("/api/debug/supabase", async (req, res) => {
+  try {
+    // Test the connection
+    const { data, error } = await supabase
+      .from('user_session')
+      .select('count(*)', { count: 'exact', head: true });
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      connection: "working",
+      tables: "accessible"
+    });
+  } catch (error) {
+    res.json({
+      success: false,
+      error: error.message,
+      connection: "failed"
+    });
+  }
+});
+
+app.get("/api/debug/quiz", async (req, res) => {
+  try {
+    console.log("Testing quiz engine import...");
+    const { startSession } = await import("./quiz/engine.js");
+    console.log("Quiz engine imported successfully");
+
+    const result = await startSession({});
+    console.log("Quiz start test result:", result);
+
+    res.json({ success: true, result });
+  } catch (error) {
+    console.error("Quiz engine test failed:", error);
+    res.json({
+      success: false,
+      error: error.message,
+      stack: error.stack?.split('\n').slice(0, 5)
+    });
+  }
+});
+
+// Health check
+app.get("/api/ping", (_req, res) => res.json({ ok: true, timestamp: new Date().toISOString() }));
+
+// Catch all for unknown routes
+app.use((req, res) => {
+  res.status(404).json({ error: "Route not found" });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error("Server error:", err);
+  res.status(500).json({ error: "Internal server error" });
+});
+
+app.post("/api/reset-session", (req, res) => {
+  // Clear the server-side session map
+  SESS.clear();
+  console.log("[reset] Server-side sessions cleared");
+  res.json({ ok: true, message: "Server sessions cleared" });
+});
+
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`[server] Listening on port ${PORT}`);
+  console.log(`[server] Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`[server] Visit http://localhost:${PORT} to test`);
+});
