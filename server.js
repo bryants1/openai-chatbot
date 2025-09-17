@@ -121,6 +121,10 @@ app.get("/", (_req, res) => {
   .status.success{background:#e8f5e8;color:#2e7d32}
   .quick-btn{padding:12px 16px;border:1px solid var(--border);border-radius:6px;background:#fff;color:#2c3e50;text-align:left;font-size:14px;cursor:pointer;transition:all 0.2s;font-weight:500}
   .quick-btn:hover{background:#f8f9fa;border-color:var(--accent)}
+  .profile-section{margin:12px 0;padding:8px 0;border-bottom:1px solid #f0f0f0}
+  .profile-section:last-child{border-bottom:none}
+  .profile-label{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:4px}
+  .profile-value{font-size:14px;color:var(--fg);font-weight:500}
 </style>
 </head>
 <body>
@@ -138,12 +142,24 @@ app.get("/", (_req, res) => {
       </div>
     </div>
     <div class="card">
-      <h2 style="margin-top:0">Quick Actions</h2>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <button class="quick-btn" onclick="sendQuickMessage('start')">🎯 Start Quiz</button>
-        <button class="quick-btn" onclick="sendQuickMessage('courses near me')">📍 Courses Near Me</button>
-        <button class="quick-btn" onclick="sendQuickMessage('beginner courses')">🏌️ Beginner Courses</button>
-        <button class="quick-btn" onclick="sendQuickMessage('best courses this weekend')">⭐ Best This Weekend</button>
+      <h2 style="margin-top:0">Profile & Status</h2>
+      <div id="profile-panel">
+        <div class="profile-section">
+          <div class="profile-label">📍 Location</div>
+          <div id="location-info" class="profile-value">Not set</div>
+        </div>
+        <div class="profile-section">
+          <div class="profile-label">📅 Date</div>
+          <div id="date-info" class="profile-value">Not set</div>
+        </div>
+        <div class="profile-section">
+          <div class="profile-label">📊 Quiz Progress</div>
+          <div id="quiz-progress" class="profile-value">Not started</div>
+        </div>
+        <div class="profile-section">
+          <div class="profile-label">🎯 Scores</div>
+          <div id="scores-info" class="profile-value">None yet</div>
+        </div>
       </div>
     </div>
   </div>
@@ -177,6 +193,11 @@ app.get("/", (_req, res) => {
       const j = await r.json();
       render(j.html || 'I do not have that in the site content.', false);
 
+      // Update profile panel if provided
+      if (j.profile) {
+        updateProfilePanel(j.profile);
+      }
+
       // Update debug info if provided
       if (j.debug) {
         side.innerHTML = '<div class="status ' + (j.debug.error ? 'error' : 'success') + '">' +
@@ -190,6 +211,34 @@ app.get("/", (_req, res) => {
   function sendQuickMessage(text){
     box.value = text;
     sendMessage();
+  }
+
+  function updateProfilePanel(profileData) {
+    if (profileData.location) {
+      const locationEl = document.getElementById('location-info');
+      if (locationEl) {
+        locationEl.textContent = profileData.location.city || profileData.location.zipCode || 'Set';
+      }
+    }
+    if (profileData.availability) {
+      const dateEl = document.getElementById('date-info');
+      if (dateEl) {
+        dateEl.textContent = profileData.availability.date || 'Set';
+      }
+    }
+    if (profileData.quizProgress) {
+      const progressEl = document.getElementById('quiz-progress');
+      if (progressEl) {
+        progressEl.textContent = profileData.quizProgress;
+      }
+    }
+    if (profileData.scores) {
+      const scoresEl = document.getElementById('scores-info');
+      if (scoresEl) {
+        const scoreCount = Object.keys(profileData.scores).length;
+        scoresEl.textContent = scoreCount > 0 ? `${scoreCount} questions answered` : 'None yet';
+      }
+    }
   }
 
   async function resetSession(){

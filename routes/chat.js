@@ -419,9 +419,34 @@ router.post("/chat", async (req, res) => {
 
     const isStart = /^\s*(start|start quiz)\s*$/i.test(lastUser);
 
+    // Extract location/date from any message and store in session
+    if (!state.mode) {
+      const courseIntent = detectCourseSearchIntent(lastUser);
+      if (courseIntent.location && !state.location) {
+        // Store extracted location
+        state.location = {
+          city: courseIntent.location,
+          coords: null,
+          zipCode: null,
+          radius: 25
+        };
+      }
+      if (courseIntent.dateInfo && !state.availability) {
+        // Store extracted date
+        state.availability = {
+          date: courseIntent.dateInfo.date,
+          type: courseIntent.dateInfo.type
+        };
+      }
+      if (courseIntent.location || courseIntent.dateInfo) {
+        SESS.set(sid, state);
+      }
+    }
+
     // Check for course search intent and suggest quiz
     if (!isStart && !state.mode) {
       const courseIntent = detectCourseSearchIntent(lastUser);
+      console.log('Course intent detection:', { lastUser, courseIntent });
       if (courseIntent.isCourseSearch) {
         // Show quiz suggestion with detected location/date
         const suggestionHTML = renderQuizSuggestionHTML(courseIntent);
