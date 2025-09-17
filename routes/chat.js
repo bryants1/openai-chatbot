@@ -161,7 +161,8 @@ function extractLocation(text = "") {
 async function geocodeCity(cityName) {
   try {
     // Use Nominatim (OpenStreetMap) free geocoding service with proper headers
-    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cityName)}&limit=1&countrycodes=us`, {
+    // Get multiple results to check for ambiguity
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cityName)}&limit=5&countrycodes=us`, {
       headers: {
         'User-Agent': 'GolfCourseBot/1.0',
         'Accept': 'application/json'
@@ -176,12 +177,64 @@ async function geocodeCity(cityName) {
     const data = await response.json();
     
     if (data && data.length > 0) {
+      // Check if there are multiple results with different states
+      const states = new Set();
+      data.forEach(result => {
+        const parts = result.display_name.split(', ');
+        if (parts.length >= 3) {
+          // Look for state in different positions
+          for (let i = parts.length - 3; i >= 0; i--) {
+            const part = parts[i].trim();
+            // Check if it looks like a state (2 letters, or contains State/Commonwealth, or is a known state name)
+            if (part.length === 2 && /^[A-Z]{2}$/.test(part)) {
+              states.add(part);
+              break;
+            } else if (part.includes('State') || part.includes('Commonwealth')) {
+              states.add(part);
+              break;
+            } else if (['Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado', 'Connecticut', 'Delaware', 'Florida', 'Georgia', 'Hawaii', 'Idaho', 'Illinois', 'Indiana', 'Iowa', 'Kansas', 'Kentucky', 'Louisiana', 'Maine', 'Maryland', 'Massachusetts', 'Michigan', 'Minnesota', 'Mississippi', 'Missouri', 'Montana', 'Nebraska', 'Nevada', 'New Hampshire', 'New Jersey', 'New Mexico', 'New York', 'North Carolina', 'North Dakota', 'Ohio', 'Oklahoma', 'Oregon', 'Pennsylvania', 'Rhode Island', 'South Carolina', 'South Dakota', 'Tennessee', 'Texas', 'Utah', 'Vermont', 'Virginia', 'Washington', 'West Virginia', 'Wisconsin', 'Wyoming'].includes(part)) {
+              states.add(part);
+              break;
+            }
+          }
+        }
+      });
+      
+      // If multiple states found, return ambiguity flag
+      if (states.size > 1) {
+        return {
+          ambiguous: true,
+          city: cityName,
+          states: Array.from(states),
+          results: data
+        };
+      }
+      
+      // Return the first result
       const result = data[0];
+      // Extract state from the first result
+      let state = null;
+      const parts = result.display_name.split(', ');
+      for (let i = parts.length - 3; i >= 0; i--) {
+        const part = parts[i].trim();
+        if (part.length === 2 && /^[A-Z]{2}$/.test(part)) {
+          state = part;
+          break;
+        } else if (part.includes('State') || part.includes('Commonwealth')) {
+          state = part;
+          break;
+        } else if (['Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado', 'Connecticut', 'Delaware', 'Florida', 'Georgia', 'Hawaii', 'Idaho', 'Illinois', 'Indiana', 'Iowa', 'Kansas', 'Kentucky', 'Louisiana', 'Maine', 'Maryland', 'Massachusetts', 'Michigan', 'Minnesota', 'Mississippi', 'Missouri', 'Montana', 'Nebraska', 'Nevada', 'New Hampshire', 'New Jersey', 'New Mexico', 'New York', 'North Carolina', 'North Dakota', 'Ohio', 'Oklahoma', 'Oregon', 'Pennsylvania', 'Rhode Island', 'South Carolina', 'South Dakota', 'Tennessee', 'Texas', 'Utah', 'Vermont', 'Virginia', 'Washington', 'West Virginia', 'Wisconsin', 'Wyoming'].includes(part)) {
+          state = part;
+          break;
+        }
+      }
+      
       return {
         lat: parseFloat(result.lat),
         lon: parseFloat(result.lon),
         display_name: result.display_name,
-        city: result.name || cityName
+        city: result.name || cityName,
+        state: state
       };
     }
     
@@ -511,23 +564,48 @@ router.post("/chat", async (req, res) => {
         // Geocode the new location
         const geocoded = await geocodeCity(locationUpdate.value);
         if (geocoded) {
-          state.location = { 
-            city: geocoded.city, 
-            coords: { lat: geocoded.lat, lon: geocoded.lon }, 
-            zipCode: null, 
-            radius: state.location?.radius || 10, // Default to 10 miles if no previous radius
-            display_name: geocoded.display_name
-          };
-          SESS.set(sid, state);
-          return res.json({ 
-            html: `✅ Updated location to ${geocoded.city} (${state.location.radius} mile radius).`,
-            profile: {
-              location: state.location,
-              availability: state.availability,
-              quizProgress: state.mode === 'quiz' ? `Quiz in progress - Question ${state.questionNumber || 1}` : "Not started",
-              scores: state.scores
-            }
-          });
+          if (geocoded.ambiguous) {
+            // Multiple states found - ask for clarification
+            state.location = { 
+              city: geocoded.city, 
+              coords: null, 
+              zipCode: null, 
+              radius: state.location?.radius || 10,
+              needsStateClarification: true,
+              availableStates: geocoded.states
+            };
+            SESS.set(sid, state);
+            const statesList = geocoded.states.join(', ');
+            return res.json({ 
+              html: `I found multiple cities named "${geocoded.city}" in different states: ${statesList}. Which state did you mean?`,
+              profile: {
+                location: state.location,
+                availability: state.availability,
+                quizProgress: state.mode === 'quiz' ? `Quiz in progress - Question ${state.questionNumber || 1}` : "Location needs state clarification",
+                scores: state.scores
+              }
+            });
+          } else {
+            // Single result found
+            state.location = { 
+              city: geocoded.city, 
+              coords: { lat: geocoded.lat, lon: geocoded.lon }, 
+              zipCode: null, 
+              radius: state.location?.radius || 10,
+              display_name: geocoded.display_name,
+              state: geocoded.state
+            };
+            SESS.set(sid, state);
+            return res.json({ 
+              html: `✅ Updated location to ${geocoded.city}, ${geocoded.state} (${state.location.radius} mile radius).`,
+              profile: {
+                location: state.location,
+                availability: state.availability,
+                quizProgress: state.mode === 'quiz' ? `Quiz in progress - Question ${state.questionNumber || 1}` : "Not started",
+                scores: state.scores
+              }
+            });
+          }
         } else {
           return res.json({ html: `❌ Could not find location "${locationUpdate.value}". Please try a different city name.` });
         }
@@ -543,13 +621,27 @@ router.post("/chat", async (req, res) => {
         // Geocode the location to get coordinates
         const geocoded = await geocodeCity(courseIntent.location);
         if (geocoded) {
-          state.location = { 
-            city: geocoded.city, 
-            coords: { lat: geocoded.lat, lon: geocoded.lon }, 
-            zipCode: null, 
-            radius: 10,
-            display_name: geocoded.display_name
-          };
+          if (geocoded.ambiguous) {
+            // Multiple states found - ask for clarification
+            state.location = { 
+              city: geocoded.city, 
+              coords: null, 
+              zipCode: null, 
+              radius: 10,
+              needsStateClarification: true,
+              availableStates: geocoded.states
+            };
+          } else {
+            // Single result found
+            state.location = { 
+              city: geocoded.city, 
+              coords: { lat: geocoded.lat, lon: geocoded.lon }, 
+              zipCode: null, 
+              radius: 10,
+              display_name: geocoded.display_name,
+              state: geocoded.state
+            };
+          }
         } else {
           // If geocoding fails, store just the city name and ask for clarification
           state.location = { 
@@ -570,6 +662,59 @@ router.post("/chat", async (req, res) => {
       }
       if (courseIntent.location || courseIntent.dateInfo) {
         SESS.set(sid, state);
+      }
+    }
+
+    // Handle state clarification if needed
+    if (state.location && state.location.needsStateClarification) {
+      const stateMatch = lastUser.match(/\b([A-Z]{2}|[A-Za-z\s]+(?:State|Commonwealth)?)\b/);
+      if (stateMatch) {
+        const requestedState = stateMatch[1].trim();
+        // Try to geocode with the specific state
+        const geocoded = await geocodeCity(`${state.location.city}, ${requestedState}`);
+        if (geocoded && !geocoded.ambiguous) {
+          state.location = { 
+            city: geocoded.city, 
+            coords: { lat: geocoded.lat, lon: geocoded.lon }, 
+            zipCode: null, 
+            radius: 10,
+            display_name: geocoded.display_name,
+            state: geocoded.state
+          };
+          state.location.needsStateClarification = false;
+          SESS.set(sid, state);
+          return res.json({ 
+            html: `✅ Got it! ${geocoded.city}, ${geocoded.state}. Now, when would you like to play?`,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Location confirmed - needs date",
+              scores: state.scores
+            }
+          });
+        } else {
+          return res.json({ 
+            html: `❌ I couldn't find ${state.location.city} in ${requestedState}. Please try a different state or be more specific.`,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Location needs clarification",
+              scores: state.scores
+            }
+          });
+        }
+      } else {
+        // Ask for state clarification
+        const statesList = state.location.availableStates.join(', ');
+        return res.json({ 
+          html: `I found multiple cities named "${state.location.city}" in different states: ${statesList}. Which state did you mean?`,
+          profile: {
+            location: state.location,
+            availability: state.availability,
+            quizProgress: "Location needs state clarification",
+            scores: state.scores
+          }
+        });
       }
     }
 

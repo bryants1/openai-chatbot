@@ -252,7 +252,19 @@ app.get("/", (_req, res) => {
     if (profileData.availability) {
       const dateEl = document.getElementById('date-info');
       if (dateEl) {
-        dateEl.textContent = profileData.availability.date || 'Set';
+        if (profileData.availability.date) {
+          // Format the date for better readability
+          const date = new Date(profileData.availability.date);
+          const options = { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+          };
+          dateEl.textContent = date.toLocaleDateString('en-US', options);
+        } else {
+          dateEl.textContent = 'Set';
+        }
       }
     }
     if (profileData.quizProgress) {
