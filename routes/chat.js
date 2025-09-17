@@ -131,14 +131,53 @@ function detectCourseSearchIntent(text = "") {
 
 function extractLocation(text = "") {
   const t = (text || "").trim();
-  let m = t.match(/\b(?:in|near|around|close to)\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
-  if (m) return m[1].replace(/[.,]+$/,'').trim();
-  m = t.match(/\bcourses?\s+in\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
-  if (m) return m[1].replace(/[.,]+$/,'').trim();
-  const words = t.replace(/[^A-Za-z\s-]/g, " ").trim().split(/\s+/);
-  if (words.length > 0 && words.length <= 3) return words.join(" ");
-  const tail = t.match(/([A-Za-z][A-Za-z\s-]{1,40})$/);
-  return tail ? tail[1].trim() : "";
+  
+  // Look for patterns like "near wayland", "in boston", "around newton"
+  let m = t.match(/\b(?:in|near|around|close to|at)\s+([A-Za-z][A-Za-z\s-]{1,30})(?:\s+(?:this|next|weekend|today|tomorrow|morning|afternoon|evening))?/i);
+  if (m) {
+    const location = m[1].trim();
+    // Remove common time words that might have been captured
+    return location.replace(/\s+(this|next|weekend|today|tomorrow|morning|afternoon|evening)$/i, '').trim();
+  }
+  
+  // Look for "courses in [location]"
+  m = t.match(/\bcourses?\s+(?:in|near|around|at)\s+([A-Za-z][A-Za-z\s-]{1,30})(?:\s+(?:this|next|weekend|today|tomorrow|morning|afternoon|evening))?/i);
+  if (m) {
+    const location = m[1].trim();
+    return location.replace(/\s+(this|next|weekend|today|tomorrow|morning|afternoon|evening)$/i, '').trim();
+  }
+  
+  // Look for "play at [location]"
+  m = t.match(/\bplay\s+(?:at|in|near|around)\s+([A-Za-z][A-Za-z\s-]{1,30})(?:\s+(?:this|next|weekend|today|tomorrow|morning|afternoon|evening))?/i);
+  if (m) {
+    const location = m[1].trim();
+    return location.replace(/\s+(this|next|weekend|today|tomorrow|morning|afternoon|evening)$/i, '').trim();
+  }
+  
+  return "";
+}
+
+async function geocodeCity(cityName) {
+  try {
+    // Use Nominatim (OpenStreetMap) free geocoding service
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cityName)}&limit=1&countrycodes=us`);
+    const data = await response.json();
+    
+    if (data && data.length > 0) {
+      const result = data[0];
+      return {
+        lat: parseFloat(result.lat),
+        lon: parseFloat(result.lon),
+        display_name: result.display_name,
+        city: result.name || cityName
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Geocoding error:', error);
+    return null;
+  }
 }
 
 function extractDateInfo(text = "") {
@@ -168,11 +207,15 @@ function extractDateInfo(text = "") {
   return null;
 }
 
-function renderQuizSuggestionHTML(intent) {
+function renderQuizSuggestionHTML(intent, state) {
   const { location, dateInfo } = intent;
   let suggestionText = "The best way for me to match you with a course is to ask you a few questions. ";
   if (location) {
-    suggestionText += `I see you're looking around ${location}. `;
+    if (state.location && state.location.needsClarification) {
+      suggestionText += `I see you're looking around ${location} (I'll need to clarify the exact location). `;
+    } else {
+      suggestionText += `I see you're looking around ${location}. `;
+    }
   }
   if (dateInfo) {
     const timeText = {
@@ -412,13 +455,26 @@ router.post("/chat", async (req, res) => {
     if (!state.mode) {
       const courseIntent = detectCourseSearchIntent(lastUser);
       if (courseIntent.location && !state.location) {
-        // Store extracted location
-        state.location = {
-          city: courseIntent.location,
-          coords: null,
-          zipCode: null,
-          radius: 25
-        };
+        // Geocode the location to get coordinates
+        const geocoded = await geocodeCity(courseIntent.location);
+        if (geocoded) {
+          state.location = { 
+            city: geocoded.city, 
+            coords: { lat: geocoded.lat, lon: geocoded.lon }, 
+            zipCode: null, 
+            radius: 25,
+            display_name: geocoded.display_name
+          };
+        } else {
+          // If geocoding fails, store just the city name and ask for clarification
+          state.location = { 
+            city: courseIntent.location, 
+            coords: null, 
+            zipCode: null, 
+            radius: 25,
+            needsClarification: true
+          };
+        }
       }
       if (courseIntent.dateInfo && !state.availability) {
         // Store extracted date
@@ -438,7 +494,7 @@ router.post("/chat", async (req, res) => {
       console.log('Course intent detection:', { lastUser, courseIntent });
       if (courseIntent.isCourseSearch && courseIntent.confidence > 0.5) {
         // Show quiz suggestion with detected location/date
-        const suggestionHTML = renderQuizSuggestionHTML(courseIntent);
+        const suggestionHTML = renderQuizSuggestionHTML(courseIntent, state);
         state.pendingQuizSuggestion = courseIntent;
         SESS.set(sid, state);
         return res.json({ 
