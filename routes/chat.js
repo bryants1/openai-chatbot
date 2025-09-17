@@ -611,12 +611,7 @@ router.post("/chat", async (req, res) => {
       state.location = locationData;
       SESS.set(sid,state);
 
-      // Save location to database
-      try {
-        await saveLocation(uid, locationData.city, locationData.coords?.lat, locationData.coords?.lon, locationData.radius);
-      } catch (error) {
-        console.error("Failed to save location:", error);
-      }
+      // Location stored in session only, not saved to database
 
       state.needsLocation=false; state.needsWhen=true;
       SESS.set(sid,state);
@@ -641,12 +636,7 @@ router.post("/chat", async (req, res) => {
         state.availability = { ...(from && {from}), ...(to && {to}), ...(bucket && {bucket}) };
         SESS.set(sid,state);
 
-        // Save availability to database
-        try {
-          await saveAvailability(uid, state.availability);
-        } catch (error) {
-          console.error("Failed to save availability:", error);
-        }
+        // Availability stored in session only, not saved to database
 
         const startAns = await startSession({
           skipLocation: true,
