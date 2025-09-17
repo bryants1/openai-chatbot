@@ -447,12 +447,20 @@ router.post("/chat", async (req, res) => {
     if (!isStart && !state.mode) {
       const courseIntent = detectCourseSearchIntent(lastUser);
       console.log('Course intent detection:', { lastUser, courseIntent });
-      if (courseIntent.isCourseSearch) {
+      if (courseIntent.isCourseSearch && courseIntent.confidence > 0.5) {
         // Show quiz suggestion with detected location/date
         const suggestionHTML = renderQuizSuggestionHTML(courseIntent);
         state.pendingQuizSuggestion = courseIntent;
         SESS.set(sid, state);
-        return res.json({ html: suggestionHTML });
+        return res.json({ 
+          html: suggestionHTML,
+          profile: {
+            location: state.location,
+            availability: state.availability,
+            quizProgress: "Quiz suggested",
+            scores: state.scores
+          }
+        });
       }
     }
 
@@ -497,7 +505,13 @@ router.post("/chat", async (req, res) => {
                   if(box){ box.value='LOCATION:'+zip+':'+radius; document.getElementById('btn').click(); }
                 })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">Continue</button>
               </div>`,
-            suppressSidecar:true
+            suppressSidecar:true,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Quiz started - needs location",
+              scores: state.scores
+            }
           });
         }
       } catch (error) {
