@@ -160,8 +160,19 @@ function extractLocation(text = "") {
 
 async function geocodeCity(cityName) {
   try {
-    // Use Nominatim (OpenStreetMap) free geocoding service
-    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cityName)}&limit=1&countrycodes=us`);
+    // Use Nominatim (OpenStreetMap) free geocoding service with proper headers
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cityName)}&limit=1&countrycodes=us`, {
+      headers: {
+        'User-Agent': 'GolfCourseBot/1.0',
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      console.error('Geocoding API error:', response.status, response.statusText);
+      return null;
+    }
+    
     const data = await response.json();
     
     if (data && data.length > 0) {

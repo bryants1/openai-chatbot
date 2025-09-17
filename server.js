@@ -135,6 +135,26 @@ app.get("/", (_req, res) => {
         <button class="reset-btn" onclick="resetSession()">Reset Session</button>
       </div>
       <div class="muted">Type <code>start</code> to begin the quiz, or ask for courses.</div>
+      
+      <!-- Quick Actions Panel -->
+      <div style="margin: 16px 0; padding: 12px; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef;">
+        <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #495057; font-weight: 600;">Quick Actions</h3>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <button class="quick-btn" onclick="sendQuickMessage('start')">
+            🎯 Start Quiz
+          </button>
+          <button class="quick-btn" onclick="sendQuickMessage('courses near me')">
+            📍 Courses Near Me
+          </button>
+          <button class="quick-btn" onclick="sendQuickMessage('beginner courses')">
+            🏌️ Beginner Courses
+          </button>
+          <button class="quick-btn" onclick="sendQuickMessage('best courses this weekend')">
+            ⭐ Best This Weekend
+          </button>
+        </div>
+      </div>
+      
       <div id="log"></div>
       <div class="row">
         <textarea id="box" placeholder="Type a message…"></textarea>
@@ -176,6 +196,11 @@ app.get("/", (_req, res) => {
     d.innerHTML = html;
     log.appendChild(d);
     d.scrollIntoView({behavior:'smooth',block:'end'});
+  }
+
+  function sendQuickMessage(message) {
+    box.value = message;
+    sendMessage();
   }
 
   async function sendMessage(){
