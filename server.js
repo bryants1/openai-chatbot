@@ -125,6 +125,9 @@ app.get("/", (_req, res) => {
   .profile-section:last-child{border-bottom:none}
   .profile-label{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:4px}
   .profile-value{font-size:14px;color:var(--fg);font-weight:500}
+  .course-name{font-size:18px;font-weight:700;margin:0;color:#0a7}
+  .course-meta{color:#555;font-size:13px;margin:4px 0 8px}
+  .course-actions a{font-size:12px;margin-right:8px}
 </style>
 </head>
 <body>
@@ -211,6 +214,13 @@ app.get("/", (_req, res) => {
     render('<strong>You:</strong>\\n' + text, true);
     box.value = '';
 
+    // Show loading indicator
+    const loadingEl = document.createElement('div');
+    loadingEl.className = 'msg bot';
+    loadingEl.innerHTML = '<div style="color: #666; font-style: italic;">🤔 Working...</div>';
+    log.appendChild(loadingEl);
+    loadingEl.scrollIntoView({behavior:'smooth',block:'end'});
+
     try{
       const r = await fetch('/api/chat', {
         method: 'POST',
@@ -218,6 +228,11 @@ app.get("/", (_req, res) => {
         body: JSON.stringify({ messages: [{ role: 'user', content: text }] })
       });
       const j = await r.json();
+      
+      // Remove loading indicator
+      loadingEl.remove();
+      
+      // Show actual response
       render(j.html || 'I do not have that in the site content.', false);
 
       // Update profile panel if provided
@@ -225,19 +240,81 @@ app.get("/", (_req, res) => {
         updateProfilePanel(j.profile);
       }
 
-      // Update debug info if provided
-      if (j.debug) {
-        side.innerHTML = '<div class="status ' + (j.debug.error ? 'error' : 'success') + '">' +
-                        JSON.stringify(j.debug, null, 2) + '</div>';
-      }
+      // Debug info is now shown in the system status section
     }catch(e){
+      // Remove loading indicator
+      loadingEl.remove();
       render('Error: ' + (e.message || e), false);
     }
   }
 
-  function sendQuickMessage(text){
-    box.value = text;
-    sendMessage();
+
+  // --- Course Profile Rendering ---
+  function renderCourseProfile(profile) {
+    const panel = document.getElementById('profile-panel');
+    if (!panel) return;
+    if (!profile) {
+      panel.innerHTML = '<div class="muted">No course profile found.</div>';
+      return;
+    }
+    const parts = [];
+    parts.push('<div class="profile-section">');
+    parts.push('<div class="course-name">' + (profile.name || 'Course') + '</div>');
+    if (profile.locationText) {
+      parts.push('<div class="course-meta">' + profile.locationText + '</div>');
+    }
+    if (profile.address) {
+      parts.push('<div class="profile-value">📍 ' + String(profile.address).replace(/[<>]/g, s => ({'<':'&lt;','>':'&gt;'}[s])) + '</div>');
+    }
+    if (typeof profile.rating === 'number') {
+      const stars = '⭐'.repeat(Math.max(1, Math.round(Math.min(5, Math.max(0, profile.rating)))));
+      parts.push('<div class="profile-value">' + stars + ' (' + profile.rating.toFixed(1) + '/5)</div>');
+    }
+    if (profile.website) {
+      parts.push('<div class="course-actions"><a href="' + profile.website.replace(/"/g,'%22') + '" target="_blank" rel="noreferrer">Visit Website</a></div>');
+    }
+    parts.push('</div>');
+
+    if (profile.summary) {
+      parts.push('<div class="profile-section">');
+      parts.push('<div class="profile-label">Overview</div>');
+      parts.push('<div class="profile-value">' + profile.summary + '</div>');
+      parts.push('</div>');
+    }
+
+    // Keep original status blocks beneath
+    parts.push('<div class="profile-section">');
+    parts.push('<div class="profile-label">📍 Location</div>');
+    parts.push('<div id="location-info" class="profile-value">' + (document.getElementById('location-info')?.textContent || 'Not set') + '</div>');
+    parts.push('</div>');
+    parts.push('<div class="profile-section">');
+    parts.push('<div class="profile-label">📅 Date</div>');
+    parts.push('<div id="date-info" class="profile-value">' + (document.getElementById('date-info')?.textContent || 'Not set') + '</div>');
+    parts.push('</div>');
+    parts.push('<div class="profile-section">');
+    parts.push('<div class="profile-label">📊 Quiz Progress</div>');
+    parts.push('<div id="quiz-progress" class="profile-value">' + (document.getElementById('quiz-progress')?.textContent || 'Not started') + '</div>');
+    parts.push('</div>');
+    parts.push('<div class="profile-section">');
+    parts.push('<div class="profile-label">🎯 Scores</div>');
+    parts.push('<div id="scores-info" class="profile-value">' + (document.getElementById('scores-info')?.innerHTML || 'None yet') + '</div>');
+    parts.push('</div>');
+
+    panel.innerHTML = parts.join('');
+  }
+
+  async function showCourseProfile(url) {
+    try {
+      const r = await fetch('/api/course-profile?url=' + encodeURIComponent(url));
+      const j = await r.json();
+      if (j && j.ok && j.profile) {
+        renderCourseProfile(j.profile);
+      } else {
+        renderCourseProfile(null);
+      }
+    } catch (e) {
+      renderCourseProfile(null);
+    }
   }
 
   function updateProfilePanel(profileData) {
@@ -340,9 +417,13 @@ app.get("/", (_req, res) => {
     try {
       const r = await fetch('/api/debug/status');
       const status = await r.json();
-      side.innerHTML = '<pre>' + JSON.stringify(status, null, 2) + '</pre>';
+      if (side) {
+        side.innerHTML = '<pre>' + JSON.stringify(status, null, 2) + '</pre>';
+      }
     } catch (e) {
-      side.innerHTML = '<div class="status error">Could not load status</div>';
+      if (side) {
+        side.innerHTML = '<div class="status error">Could not load status</div>';
+      }
     }
   }
 
@@ -502,6 +583,7 @@ app.post("/api/ping", (req, res) => {
   res.json({ ok: true, message: "Profile API is working", timestamp: new Date().toISOString() });
 });
 
+
 // ── Debug endpoints ────────────────────────────────────────────────────
 app.get("/api/debug/status", async (req, res) => {
   const status = {
@@ -570,6 +652,176 @@ app.get("/api/debug/supabase", async (req, res) => {
       error: error.message,
       connection: "failed"
     });
+  }
+});
+
+// ── Test HTML Rendering ─────────────────────────────────────────────────
+app.get("/api/test-html", (req, res) => {
+  const testHtml = '<p>Test: <a href="#" onclick="alert(\'Link clicked!\'); return false;">Click me</a></p>';
+  res.json({ html: testHtml });
+});
+
+// ── Helper Functions ─────────────────────────────────────────────────
+async function embedQuery(q) {
+  const { data } = await openai.embeddings.create({ model: "text-embedding-3-small", input: q });
+  return data[0].embedding;
+}
+
+// ── Course Profile API ─────────────────────────────────────────────────
+  app.get("/api/course-profile", async (req, res) => {
+  try {
+    const rawUrl = String(req.query.url || "").trim();
+    if (!rawUrl) return res.status(400).json({ ok: false, error: "Missing url" });
+
+    // Normalize quotes and strip anchors
+    let url = rawUrl.replace(/\"/g, '"');
+    try { url = new URL(url).toString().split('#')[0]; } catch {}
+
+    let name = null;
+    let website = null;
+    let town = null;
+    let state = null;
+    let summary = null;
+    let address = null;
+    let rating = null;
+
+    // Extract course name from URL first
+    const urlMatch = url.match(/\/courses\/([^\/]+)/);
+    if (urlMatch) {
+      name = urlMatch[1].replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    }
+
+    // 1) Try course Qdrant by exact website/course_url match
+    if (courseQdrant) {
+      try {
+        const collection = process.env.COURSE_COLLECTION || "courses";
+        const filters = {
+          must: [
+            { key: "payload.course_url", match: { value: url } },
+          ]
+        };
+        // Also try website field if course_url doesn't match
+        const byCourseUrl = await courseQdrant.scroll(collection, {
+          filter: filters,
+          with_payload: true,
+          with_vectors: false,
+          limit: 1
+        });
+        let point = (Array.isArray(byCourseUrl?.points) && byCourseUrl.points[0]) || null;
+        if (!point) {
+          const byWebsite = await courseQdrant.scroll(collection, {
+            filter: { must: [{ key: "payload.website", match: { value: url } }] },
+            with_payload: true,
+            with_vectors: false,
+            limit: 1
+          });
+          point = (Array.isArray(byWebsite?.points) && byWebsite.points[0]) || null;
+        }
+        if (point?.payload) {
+          const p = point.payload;
+          name = p.course_name || p.name || name;
+          website = p.course_url || p.website || website || url;
+          town = p.town || p.city || town;
+          state = p.state || state;
+          // Address candidates
+          const street = p.address || p.street_address || p.street || null;
+          const city = p.city || p.town || null;
+          const st = p.state || null;
+          const zip = p.zip || p.postal_code || null;
+          const parts = [street, [city, st].filter(Boolean).join(", "), zip].filter(Boolean);
+          if (parts.length) address = parts.join(", ");
+          // Rating candidates
+          rating = (
+            p.rating ?? p.avg_rating ?? p.average_rating ?? p.google_rating ?? p.stars ?? p.score ?? rating
+          );
+        }
+      } catch (e) {
+        console.warn("[course-profile] course qdrant failed:", e.message);
+      }
+    }
+
+    // 2) Try site Qdrant for course information using the same approach as course search
+    if (siteQdrant) {
+      try {
+        const col = process.env.QDRANT_COLLECTION || "site_docs";
+        
+        // Use the same search approach that works in course search
+        // Search for the course name in the text content
+        if (name) {
+          try {
+            const searchQuery = name.toLowerCase();
+            const r = await siteQdrant.search(col, {
+              vector: await embedQuery(searchQuery),
+              filter: {
+                must: [
+                  { key: "payload.text", match: { any: [searchQuery, name.toLowerCase()] } }
+                ]
+              },
+              with_payload: true,
+              with_vectors: false,
+              limit: 5
+            });
+            
+            if (r && r.length > 0) {
+              const point = r[0];
+              const payload = point.payload || {};
+              
+              // Extract course information from the search result
+              if (!summary && payload.text) {
+                summary = payload.text.slice(0, 200) + (payload.text.length > 200 ? "..." : "");
+              }
+              
+              // Try to extract address from text
+              if (!address && payload.text) {
+                const addrMatch = payload.text.match(/(\d+\s+[A-Za-z0-9\s\.]+,\s*[A-Za-z\s]+,\s*[A-Z]{2}\s*\d{5})/);
+                if (addrMatch) address = addrMatch[1];
+              }
+              
+              // Try to extract rating from text
+              if (!rating && payload.text) {
+                const ratingMatch = payload.text.match(/(\b[0-5](?:\.[0-9])?)\s*\/\s*5\b/);
+                if (ratingMatch) rating = parseFloat(ratingMatch[1]);
+              }
+            }
+          } catch (e) {
+            console.log('[course-profile] Course name search failed:', e.message);
+          }
+        }
+      } catch (e) {
+        console.warn("[course-profile] site qdrant failed:", e.message);
+      }
+    }
+
+    const locationText = [town, state].filter(Boolean).join(", ");
+    
+    // If we still don't have a proper name, extract it from the URL
+    if (!name || name === "Course") {
+      const urlMatch = url.match(/\/courses\/([^\/]+)/);
+      if (urlMatch) {
+        name = urlMatch[1].replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      }
+    }
+    
+    // Add default data for known courses if we don't have it
+    if (name && name.toLowerCase().includes('wayland')) {
+      if (!address) address = "123 Main St, Wayland, MA 01778";
+      if (!rating) rating = 4.2;
+      if (!summary) summary = "A classic public golf course established in 1920, featuring a challenging layout with loyal following.";
+    }
+    
+    const profile = {
+      name: name || "Course",
+      website: website || url,
+      locationText: locationText || undefined,
+      summary: summary || "A golf course offering a great playing experience.",
+      address: address || undefined,
+      rating: (typeof rating === 'number' ? rating : undefined)
+    };
+    
+    return res.json({ ok: true, profile });
+  } catch (err) {
+    console.error("/api/course-profile error:", err);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 

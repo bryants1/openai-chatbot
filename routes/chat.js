@@ -91,42 +91,63 @@ async function saveSessionProgress(userId, sessionId, answers, scores, answeredI
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- * Course search intent detection
+ * OpenAI-powered intent detection
  * ────────────────────────────────────────────────────────────────────────── */
-function detectCourseSearchIntent(text = "") {
-  const t = (text || "").toLowerCase();
-  
-  const courseKeywords = [
-    'course', 'courses', 'golf course', 'golfing', 'play golf', 'play', 'tee time', 
-    'beginner', 'intermediate', 'advanced', 'difficulty', 'skill level', 
-    'looking for', 'find', 'recommend', 'suggest', 'best course', 'want to play'
-  ];
+async function detectIntentWithOpenAI(text = "") {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `Analyze the user's message and determine their intent. Respond with a JSON object containing:
+{
+  "intent": "course_search" | "quiz_request" | "general_question" | "other",
+  "confidence": 0.0-1.0,
+  "location": "extracted location or null",
+  "dateInfo": {"date": "extracted date string or null", "type": "date type (today, tomorrow, weekend, specific date, etc.) or null"},
+  "reasoning": "brief explanation"
+}
 
-  const locationKeywords = [
-    'near', 'around', 'in', 'close to', 'within', 'area', 'location'
-  ];
+Intent definitions:
+- "course_search": User wants to find/search for golf courses (e.g., "courses in Boston", "golf courses near me", "best courses this weekend", "show me courses in wayland")
+- "quiz_request": User wants to play golf or get personalized recommendations (e.g., "start quiz", "I want to play golf", "I'm looking to play a course", "recommend courses for me", "what courses match my skill level", "I want to play this weekend")
+- "general_question": General golf-related questions not about finding courses or playing
+- "other": Anything else
 
-  const timeKeywords = [
-    'today', 'tomorrow', 'weekend', 'this week', 'next week', 'morning', 'afternoon', 'evening'
-  ];
+Key distinction: If the user expresses intent to PLAY golf (not just find courses), classify as quiz_request. If they want to SEARCH/BROWSE courses, classify as course_search.`
+        },
+        {
+          role: "user",
+          content: text
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 200
+    });
 
-  // Check if text contains course-related keywords
-  const hasCourseIntent = courseKeywords.some(keyword => t.includes(keyword));
-  const hasLocationIntent = locationKeywords.some(keyword => t.includes(keyword));
-  const hasTimeIntent = timeKeywords.some(keyword => t.includes(keyword));
+    const response = completion.choices[0]?.message?.content?.trim();
+    if (!response) {
+      return { intent: "general_question", confidence: 0.5, location: null, dateInfo: null, reasoning: "No response from OpenAI" };
+    }
 
-  // Extract location and date info
-  const location = extractLocation(text);
-  const dateInfo = extractDateInfo(text);
-
-  return {
-    isCourseSearch: hasCourseIntent,
-    hasLocation: hasLocationIntent || location.length > 0,
-    hasTime: hasTimeIntent || dateInfo !== null,
-    location: location,
-    dateInfo: dateInfo,
-    confidence: (hasCourseIntent ? 1 : 0) + (hasLocationIntent ? 0.5 : 0) + (hasTimeIntent ? 0.3 : 0)
-  };
+    try {
+      const parsed = JSON.parse(response);
+    return {
+        intent: parsed.intent || "general_question",
+        confidence: parsed.confidence || 0.5,
+        location: parsed.location || null,
+        dateInfo: parsed.dateInfo || null,
+        reasoning: parsed.reasoning || "Parsed from OpenAI"
+      };
+    } catch (parseError) {
+      console.warn("Failed to parse OpenAI intent response:", response);
+      return { intent: "general_question", confidence: 0.5, location: null, dateInfo: null, reasoning: "Parse error" };
+    }
+  } catch (error) {
+    console.error("OpenAI intent detection failed:", error);
+    return { intent: "general_question", confidence: 0.5, location: null, dateInfo: null, reasoning: "OpenAI error" };
+  }
 }
 
 function extractLocation(text = "") {
@@ -295,7 +316,9 @@ function detectLocationUpdate(text = "") {
 }
 
 function renderQuizSuggestionHTML(intent, state) {
-  const { location, dateInfo } = intent;
+  const location = intent.location || (state.location && state.location.city);
+  const dateInfo = intent.dateInfo || state.availability;
+  
   let suggestionText = "The best way for me to match you with a course is to ask you a few questions. ";
   if (location) {
     if (state.location && state.location.needsClarification) {
@@ -322,8 +345,29 @@ function renderQuizSuggestionHTML(intent, state) {
       </div>
       <div style="display:flex; gap:8px; margin-top:6px">
         <button onclick="(function(){
-          var box=document.getElementById('box');
-          if(box){ box.value='yes'; document.getElementById('btn').click(); }
+          // Directly start the quiz instead of sending 'yes' message
+          fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: [{ role: 'user', content: 'START_QUIZ_FROM_SUGGESTION' }] })
+          })
+          .then(r => r.json())
+          .then(data => {
+            if (data.html) {
+              const log = document.getElementById('log');
+              if (log) {
+                const botMsg = document.createElement('div');
+                botMsg.className = 'msg bot';
+                botMsg.innerHTML = data.html;
+                log.appendChild(botMsg);
+                log.scrollIntoView({behavior:'smooth',block:'end'});
+              }
+              if (data.profile) {
+                updateProfile(data.profile);
+              }
+            }
+          })
+          .catch(e => console.error('Quiz start error:', e));
         })()">
           Yes, start quiz
         </button>
@@ -393,16 +437,39 @@ function isListIntent(q) {
   return /(best|top|list|recommend|recommendation|near|close to|within|under\s*\$?\d+|courses?\s+(in|near|around)|bucket\s*list)/i.test(s);
 }
 
-function renderReplyHTML(text=""){
-  const md=(s)=>s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,(m,l,u)=>`<a href="${u.replace(/"/g,"%22")}" target="_blank" rel="noreferrer">${l}</a>`);
-  const lines=String(text).split(/\r?\n/);let html=[],list=false,para=[];
-  const flush=()=>{if(para.length){html.push(`<p>${md(para.join(" "))}</p>`);para=[]}};
-  for(const raw of lines){const line=raw.trim();
-    if(!line){flush();if(list){html.push("</ul>");list=false}continue}
-    if(/^([•\-\*]\s+)/.test(line)){flush();if(!list){html.push("<ul>");list=true}
-      html.push(`<li>${md(line.replace(/^([•\-\*]\s+)/,"").trim())}</li>`)}
-    else para.push(line)}
-  flush();if(list)html.push("</ul>");return html.join("");
+function renderReplyHTML(text = "", linkHints = []) {
+  // linkify markdown links first
+  const md = (s) => s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, l, u) =>
+    `<a href="${u.replace(/"/g, "%22")}" target="_blank" rel="noreferrer">${l}</a>`
+  );
+
+  // Linkify known course names to open right-panel profiles
+  function linkifyCourses(s) {
+    if (!Array.isArray(linkHints) || !linkHints.length) return s;
+    let out = s;
+    for (const hint of linkHints) {
+      const name = (hint.name || "").trim();
+      const url = (hint.url || "").trim();
+      if (!name || !url) continue;
+      const safeU = url.replace(/"/g, "%22");
+      const re = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\b`, "gi");
+      out = out.replace(re, (m) => `<a href="#" onclick="showCourseProfile('${safeU}'); return false;">${m}</a>`);
+    }
+    return out;
+  }
+
+  const lines = String(text).split(/\r?\n/);
+  let html = [], list = false, para = [];
+  const flush = () => { if (para.length) { html.push(`<p>${md(linkifyCourses(para.join(" ")))}</p>`); para = []; } };
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { flush(); if (list) { html.push("</ul>"); list = false; } continue; }
+    if (/^([•\-\*]\s+)/.test(line)) {
+      flush(); if (!list) { html.push("<ul>"); list = true; }
+      html.push(`<li>${md(linkifyCourses(line.replace(/^([•\-\*]\s+)/, "").trim()))}</li>`);
+    } else para.push(line);
+  }
+  flush(); if (list) html.push("</ul>"); return html.join("");
 }
 function renderQuestionHTML(q){
   const headline=(q.conversational_text||q.text||"").trim();
@@ -448,7 +515,14 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
     for (const c of courses.slice(0, 8)) {
       const name = (c.name || c.payload?.course_name || "Course");
       const score = (typeof c.score === "number") ? ` – ${c.score.toFixed(3)}` : "";
+      const url = c.url || c.payload?.course_url || c.payload?.website || "";
+      if (url) {
+        const safe = String(url).replace(/"/g, '%22');
+        // Make the course name open the right-panel profile; include a small external visit link
+        lines.push(`• <a href="#" onclick="showCourseProfile('${safe}'); return false;">${name}</a>${score} <a href="${safe}" target="_blank" rel="noreferrer" style="font-size:12px;margin-left:6px">Visit</a>`);
+      } else {
       lines.push(`• ${name}${score}`);
+      }
     }
     lines.push("");
   }
@@ -535,6 +609,99 @@ router.post("/chat", async (req, res) => {
     }
     SESS.set(sid, state);
 
+    // Check if this is a quiz start request
+    const isStart = /^\s*(start|start quiz)\s*$/i.test(lastUser);
+
+    // Handle quiz start FIRST, before any other processing
+    if (isStart) {
+      try {
+        // Reset session state for fresh quiz start
+        state.mode = null;
+        state.question = null;
+        state.questionNumber = null;
+        state.answers = {};
+        state.scores = {};
+        state.pendingQuizSuggestion = null;
+        
+        // Check if we already have location and date information
+        const hasLocation = state.location && (state.location.coords || state.location.city);
+        const hasDate = state.availability && state.availability.date;
+
+        const startAns = await startSession({
+          sessionId: state.sessionId, // ensure engine ties to this session
+          skipLocation: hasLocation,
+          location: state.location,
+          availability: state.availability
+        });
+        
+        if (!startAns) {
+          SESS.set(sid, newChatState());
+          return res.json({ html:"Sorry, I couldn't start the quiz right now." });
+        }
+        
+        if (startAns.needsLocation) {
+          state.mode="quiz";
+          state.sessionId=startAns.sessionId;
+          state.needsLocation=true;
+          state.pendingQuizSuggestion = null; // Clear the pending suggestion
+          SESS.set(sid,state);
+          return res.json({
+            html: `
+              <div style="font-size:16px;margin:0 0 10px">Where are you looking for golf courses?</div>
+              <div style="margin:10px 0">
+                <input type="text" id="zipcode" placeholder="ZIP (e.g., 02134)"
+                       style="padding:8px;border:1px solid #ddd;border-radius:6px;width:150px;margin-right:8px">
+                <select id="radius" style="padding:8px;border:1px solid #ddd;border-radius:6px">
+                  <option value="10">10 miles</option>
+                  <option value="25" selected>25 miles</option>
+                  <option value="50">50 miles</option>
+                  <option value="100">100 miles</option>
+                  <option value="9999">Anywhere</option>
+                </select>
+                <button onclick="(function(){
+                  var zip=document.getElementById('zipcode').value.trim();
+                  var radius=document.getElementById('radius').value.trim();
+                  var box=document.getElementById('box');
+                  if(box){ box.value='LOCATION:'+zip+':'+radius; document.getElementById('btn').click(); }
+                })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">Continue</button>
+              </div>`,
+            suppressSidecar:true,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Quiz started - needs location",
+              scores: state.scores
+            }
+          });
+        }
+        
+        // If we have both location and date, show quiz suggestion instead of starting immediately
+        if (startAns.question) {
+          // Don't start the quiz yet - show suggestion first
+          // Create a mock intent object for the suggestion
+          const mockIntent = {
+            location: state.location?.city || state.location?.display_name,
+            dateInfo: state.availability?.original || state.availability?.date
+          };
+          state.pendingQuizSuggestion = mockIntent;
+          const suggestionHTML = renderQuizSuggestionHTML(mockIntent, state);
+          SESS.set(sid, state);
+          return res.json({ 
+            html: suggestionHTML,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Quiz suggested",
+              scores: state.scores
+            }
+          });
+        }
+      } catch (error) {
+        console.error("Quiz start error:", error);
+        return res.json({ html:"Sorry, I couldn't start the quiz right now." });
+      }
+    }
+
     // Exit quiz
     if (/^\s*(cancel|stop|exit|end)\s*(quiz)?\s*$/i.test(lastUser)) {
       SESS.set(sid, newChatState());
@@ -612,14 +779,14 @@ router.post("/chat", async (req, res) => {
       }
     }
 
-    const isStart = /^\s*(start|start quiz)\s*$/i.test(lastUser);
-
     // Extract location/date from any message and store in session
     if (!state.mode) {
-      const courseIntent = detectCourseSearchIntent(lastUser);
-      if (courseIntent.location && !state.location) {
+      const intent = await detectIntentWithOpenAI(lastUser);
+      console.log('OpenAI intent detection:', { lastUser, intent });
+      
+      if (intent.location && !state.location) {
         // Geocode the location to get coordinates
-        const geocoded = await geocodeCity(courseIntent.location);
+        const geocoded = await geocodeCity(intent.location);
         if (geocoded) {
           if (geocoded.ambiguous) {
             // Multiple states found - ask for clarification
@@ -645,7 +812,7 @@ router.post("/chat", async (req, res) => {
         } else {
           // If geocoding fails, store just the city name and ask for clarification
           state.location = { 
-            city: courseIntent.location, 
+            city: intent.location, 
             coords: null, 
             zipCode: null, 
             radius: 10,
@@ -653,14 +820,62 @@ router.post("/chat", async (req, res) => {
           };
         }
       }
-      if (courseIntent.dateInfo && !state.availability) {
-        // Store extracted date
-        state.availability = {
-          date: courseIntent.dateInfo.date,
-          type: courseIntent.dateInfo.type
-        };
+      if (intent.dateInfo && !state.availability) {
+        // Store extracted date - handle both string and object formats
+        let dateString, dateType;
+        
+        if (typeof intent.dateInfo === 'string') {
+          dateString = intent.dateInfo;
+          dateType = 'relative';
+        } else if (intent.dateInfo.date) {
+          dateString = intent.dateInfo.date;
+          dateType = intent.dateInfo.type || 'relative';
+        }
+        
+        if (dateString) {
+          // Convert relative dates to actual dates
+          let actualDate;
+          const today = new Date();
+          
+          switch (dateString.toLowerCase()) {
+            case 'today':
+              actualDate = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+              break;
+            case 'tomorrow':
+              const tomorrow = new Date(today);
+              tomorrow.setDate(today.getDate() + 1);
+              actualDate = tomorrow.toISOString().split('T')[0];
+              break;
+            case 'this weekend':
+            case 'weekend':
+              // Find next Saturday
+              const nextSaturday = new Date(today);
+              const daysUntilSaturday = (6 - today.getDay()) % 7;
+              if (daysUntilSaturday === 0 && today.getDay() !== 6) {
+                nextSaturday.setDate(today.getDate() + 7); // Next week's Saturday
+              } else {
+                nextSaturday.setDate(today.getDate() + daysUntilSaturday);
+              }
+              actualDate = nextSaturday.toISOString().split('T')[0];
+              break;
+            default:
+              // Try to parse as a date string
+              const parsedDate = new Date(dateString);
+              if (!isNaN(parsedDate.getTime())) {
+                actualDate = parsedDate.toISOString().split('T')[0];
+              } else {
+                actualDate = dateString; // Keep original if can't parse
+              }
+          }
+          
+          state.availability = {
+            date: actualDate,
+            type: dateType,
+            original: dateString // Keep original for reference
+          };
+        }
       }
-      if (courseIntent.location || courseIntent.dateInfo) {
+      if (intent.location || intent.dateInfo) {
         SESS.set(sid, state);
       }
     }
@@ -683,15 +898,15 @@ router.post("/chat", async (req, res) => {
           };
           state.location.needsStateClarification = false;
           SESS.set(sid, state);
-          return res.json({ 
-            html: `✅ Got it! ${geocoded.city}, ${geocoded.state}. Now, when would you like to play?`,
-            profile: {
-              location: state.location,
-              availability: state.availability,
-              quizProgress: "Location confirmed - needs date",
-              scores: state.scores
-            }
-          });
+            return res.json({ 
+              html: `✅ Got it! ${geocoded.city}, ${geocoded.state}. Now, when would you like to play?`,
+              profile: {
+                location: state.location,
+                availability: state.availability,
+                quizProgress: "Location confirmed - needs date",
+                scores: state.scores
+              }
+            });
         } else {
           return res.json({ 
             html: `❌ I couldn't find ${state.location.city} in ${requestedState}. Please try a different state or be more specific.`,
@@ -718,11 +933,13 @@ router.post("/chat", async (req, res) => {
       }
     }
 
-    // Check for course search intent and suggest quiz
+    // Check for quiz request intent and suggest quiz
     if (!isStart && !state.mode) {
-      const courseIntent = detectCourseSearchIntent(lastUser);
-      console.log('Course intent detection:', { lastUser, courseIntent });
-      if (courseIntent.isCourseSearch && courseIntent.confidence > 0.3) {
+      const intent = await detectIntentWithOpenAI(lastUser);
+      console.log('OpenAI intent detection:', { lastUser, intent });
+      
+      // Only suggest quiz for explicit quiz requests, not general course searches
+      if (intent.intent === "quiz_request" && intent.confidence > 0.7) {
         // Check if we have location but no date - ask for date first
         const hasLocation = state.location && (state.location.coords || state.location.city);
         const hasDate = state.availability && state.availability.date;
@@ -754,8 +971,8 @@ router.post("/chat", async (req, res) => {
         }
         
         // Show quiz suggestion with detected location/date
-        const suggestionHTML = renderQuizSuggestionHTML(courseIntent, state);
-        state.pendingQuizSuggestion = courseIntent;
+        const suggestionHTML = renderQuizSuggestionHTML(intent, state);
+        state.pendingQuizSuggestion = intent;
         SESS.set(sid, state);
         return res.json({ 
           html: suggestionHTML,
@@ -770,7 +987,7 @@ router.post("/chat", async (req, res) => {
     }
 
     // Handle quiz start from pending suggestion
-    if (state.pendingQuizSuggestion && (lastUser.toLowerCase() === 'yes' || lastUser.toLowerCase() === 'y')) {
+    if (state.pendingQuizSuggestion && (lastUser.toLowerCase() === 'yes' || lastUser.toLowerCase() === 'y' || lastUser === 'START_QUIZ_FROM_SUGGESTION')) {
       try {
         const hasLocation = state.location && (state.location.coords || state.location.city);
         const hasDate = state.availability && state.availability.date;
@@ -851,8 +1068,7 @@ router.post("/chat", async (req, res) => {
         // If we have both location and date, show quiz suggestion instead of starting immediately
         if (startAns.question) {
           // Don't start the quiz yet - show suggestion first
-          const suggestionHTML = renderQuizSuggestionHTML(courseIntent, state);
-          state.pendingQuizSuggestion = courseIntent;
+          const suggestionHTML = renderQuizSuggestionHTML(state.pendingQuizSuggestion, state);
           SESS.set(sid, state);
           return res.json({ 
             html: suggestionHTML,
@@ -880,61 +1096,6 @@ router.post("/chat", async (req, res) => {
       // Continue to RAG search below
     }
 
-    // Handle quiz start FIRST, before RAG - using direct engine call
-    if (isStart) {
-      try {
-        // Check if we already have location and date information
-        const hasLocation = state.location && (state.location.coords || state.location.city);
-        const hasDate = state.availability && state.availability.date;
-        
-        const startAns = await startSession({
-          skipLocation: hasLocation,
-          location: state.location,
-          availability: state.availability
-        });
-        if (!startAns) {
-          SESS.set(sid, newChatState());
-          return res.json({ html:"Sorry, I couldn't start the quiz right now." });
-        }
-        if (startAns.needsLocation) {
-          state.mode="quiz";
-          state.sessionId=startAns.sessionId;
-          state.needsLocation=true;
-          SESS.set(sid,state);
-          return res.json({
-            html: `
-              <div style="font-size:16px;margin:0 0 10px">Where are you looking for golf courses?</div>
-              <div style="margin:10px 0">
-                <input type="text" id="zipcode" placeholder="ZIP (e.g., 02134)"
-                       style="padding:8px;border:1px solid #ddd;border-radius:6px;width:150px;margin-right:8px">
-                <select id="radius" style="padding:8px;border:1px solid #ddd;border-radius:6px">
-                  <option value="10">10 miles</option>
-                  <option value="25" selected>25 miles</option>
-                  <option value="50">50 miles</option>
-                  <option value="100">100 miles</option>
-                  <option value="9999">Anywhere</option>
-                </select>
-                <button onclick="(function(){
-                  var zip=document.getElementById('zipcode').value.trim();
-                  var radius=document.getElementById('radius').value.trim();
-                  var box=document.getElementById('box');
-                  if(box){ box.value='LOCATION:'+zip+':'+radius; document.getElementById('btn').click(); }
-                })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">Continue</button>
-              </div>`,
-            suppressSidecar:true,
-            profile: {
-              location: state.location,
-              availability: state.availability,
-              quizProgress: "Quiz started - needs location",
-              scores: state.scores
-            }
-          });
-        }
-      } catch (error) {
-        console.error("Quiz start error:", error);
-        return res.json({ html:"Sorry, I couldn't start the quiz right now." });
-      }
-    }
 
     // RAG by default (not in quiz and not already handled)
     if (state.mode !== "quiz" && !isStart) {
@@ -984,29 +1145,130 @@ router.post("/chat", async (req, res) => {
           const txt=(h?.payload?.text || "").slice(0,1400);
           const block = `[${i+1}] ${url}\n${title?title+"\n":""}${txt}\n---\n`;
           if (context.length + block.length > MAX_CHARS) break;
-          context += block; links.push(url);
+          context += block;
+          // Extract course name with better fallback logic
+          let name = h?.payload?.course_name || h?.payload?.h1 || h?.payload?.title;
+          
+          // If no name found, try to extract from URL or text
+          if (!name || name === url) {
+            // Try to extract course name from URL path
+            const urlMatch = url.match(/\/courses\/([^\/]+)/);
+            if (urlMatch) {
+              name = urlMatch[1].replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            } else {
+              // Try to extract from text content
+              const textMatch = txt.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Country Club|Golf Club|Golf Course))/);
+              if (textMatch) {
+                name = textMatch[1];
+              } else {
+                name = url; // Fallback to URL
+              }
+            }
+          }
+          
+          links.push({ url, name });
         }
+
+        // Build course names list for the AI to use
+        const courseNames = links.map(l => l.name).filter(Boolean);
+        const courseNamesText = courseNames.length > 0 ? 
+          `\n# Available Course Names (use these exact names in your response):
+${courseNames.map(name => `- ${name}`).join('\n')}` : '';
+        
 
         const systemContent = `You are a friendly golf buddy who knows course details from the site context.
         - Base everything ONLY on the Site Context. No guessing.
         - Keep answers short (2–4 sentences).
         - Use citations like [n] for facts.
         - If nothing relevant is in context, say: "${REFUSAL}".
+        - IMPORTANT: Use the exact course names from the "Available Course Names" list below in your response.
         # Site Context
-        ${context}`;
+        ${context}${courseNamesText}`;
 
         const completion = await openai.chat.completions.create({
           model:"gpt-4o-mini",
           messages:[{ role:"system", content: systemContent }, ...messages.filter(m=>m.role==="user")],
           temperature:0.3, max_tokens:450
         });
-        const reply = (completion.choices[0]?.message?.content || "").trim();
+        let reply = (completion.choices[0]?.message?.content || "").trim();
         if (!reply && links.length===0) return res.json({ html: REFUSAL });
+        
+        // Post-process the reply to clean up course name duplications
+        if (links.length > 0) {
+          for (const link of links) {
+            const exactName = link.name;
+            if (!exactName) continue;
+            
+            // Fix common duplications like "Wayland Country ClubCountry Club"
+            const duplicationPatterns = [
+              // Exact duplication: "Wayland Country ClubWayland Country Club"
+              new RegExp(`\\b${exactName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}${exactName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\b`, 'gi'),
+              // Partial duplication: "Wayland Country ClubCountry Club"
+              new RegExp(`\\b${exactName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}Country Club\\b`, 'gi'),
+              new RegExp(`\\b${exactName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}Golf Club\\b`, 'gi'),
+              new RegExp(`\\b${exactName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}Golf Course\\b`, 'gi')
+            ];
+            
+            for (const pattern of duplicationPatterns) {
+              reply = reply.replace(pattern, exactName);
+            }
+          }
+        }
+
 
         const sections=[];
-        if (reply && reply !== REFUSAL) sections.push(renderReplyHTML(reply));
-        else sections.push("Here are relevant pages on our site:");
-        if (links.length) sections.push("<strong>Sources</strong><br/>" + [...new Set(links)].map(u=>"• <a href='"+u+"' target='_blank' rel='noreferrer'>"+u+"</a>").join("<br/>"));
+        if (reply && reply !== REFUSAL) {
+          // Create course name to URL mapping for direct replacement
+          const courseMap = new Map();
+          for (const link of links) {
+            if (link.name && link.url) {
+              courseMap.set(link.name.toLowerCase(), link.url);
+            }
+          }
+          
+          // Replace course names in the reply with clickable links
+          let processedReply = reply;
+          for (const [courseName, url] of courseMap) {
+            const safeUrl = url.replace(/"/g, '%22');
+            
+            // Only replace if it's a proper course name (not generic words like "courses")
+            if (courseName && courseName.length > 3 && !courseName.includes('http') && !courseName.includes('courses')) {
+              // Try multiple variations of the course name
+              const variations = [
+                courseName,
+                courseName + 'Country Club', // Handle duplication
+                courseName + 'Golf Club',
+                courseName + 'Golf Course'
+              ];
+              
+              for (const variation of variations) {
+                const regex = new RegExp(`\\b${variation.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\b`, 'gi');
+                processedReply = processedReply.replace(regex, (match) => 
+                  `<a href="#" onclick="showCourseProfile('${safeUrl}'); return false;">${match}</a>`
+                );
+              }
+            }
+          }
+          
+          // Since processedReply already contains HTML links, wrap it in a paragraph
+          sections.push(`<p>${processedReply}</p>`);
+        } else {
+          sections.push("Here are relevant pages on our site:");
+          if (links.length) {
+            const dedup = new Map();
+            for (const l of links) {
+              if (!dedup.has(l.url)) dedup.set(l.url, l);
+            }
+            const unique = [...dedup.values()];
+            const html = unique.map(({ url, name }) => {
+              const safeU = String(url).replace(/"/g, '%22');
+              const safeN = String(name || url).replace(/[<>]/g, s => ({'<':'&lt;','>':'&gt;'}[s]));
+              // Primary link opens the profile panel; include a small external visit link
+              return `• <a href="#" onclick="showCourseProfile('${safeU}'); return false;">${safeN}</a> <a href='${safeU}' target='_blank' rel='noreferrer' style='font-size:12px;margin-left:6px'>Visit</a>`;
+            }).join("<br/>");
+            sections.push("<strong>Courses</strong><br/>" + html);
+          }
+        }
         return res.json({ html: sections.join("<br/><br/>") });
 
       } catch (error) {
