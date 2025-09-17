@@ -219,6 +219,28 @@ function extractDateInfo(text = "") {
   return null;
 }
 
+/**
+ * Detect location/radius update commands
+ * ────────────────────────────────────────────────────────────────────────── */
+function detectLocationUpdate(text = "") {
+  const t = (text || "").toLowerCase();
+  
+  // Look for radius changes: "change radius to 20 miles", "set radius to 15", etc.
+  const radiusMatch = t.match(/(?:change|set|update)\s+radius\s+to\s+(\d+)(?:\s+miles?)?/i);
+  if (radiusMatch) {
+    return { type: 'radius', value: parseInt(radiusMatch[1]) };
+  }
+  
+  // Look for location changes: "change location to sudbury", "set location to boston", etc.
+  const locationMatch = t.match(/(?:change|set|update)\s+location\s+to\s+([a-zA-Z\s-]+)/i);
+  if (locationMatch) {
+    const location = locationMatch[1].trim();
+    return { type: 'location', value: location };
+  }
+  
+  return null;
+}
+
 function renderQuizSuggestionHTML(intent, state) {
   const { location, dateInfo } = intent;
   let suggestionText = "The best way for me to match you with a course is to ask you a few questions. ";
@@ -466,6 +488,52 @@ router.post("/chat", async (req, res) => {
       return res.json({ html: "Got it – I've exited the quiz. Ask anything or type 'start' to begin again." });
     }
 
+    // Handle location/radius updates
+    const locationUpdate = detectLocationUpdate(lastUser);
+    if (locationUpdate) {
+      if (locationUpdate.type === 'radius') {
+        if (state.location) {
+          state.location.radius = locationUpdate.value;
+          SESS.set(sid, state);
+          return res.json({ 
+            html: `✅ Updated search radius to ${locationUpdate.value} miles.`,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: state.mode === 'quiz' ? `Quiz in progress - Question ${state.questionNumber || 1}` : "Not started",
+              scores: state.scores
+            }
+          });
+        } else {
+          return res.json({ html: "❌ No location set yet. Please set a location first." });
+        }
+      } else if (locationUpdate.type === 'location') {
+        // Geocode the new location
+        const geocoded = await geocodeCity(locationUpdate.value);
+        if (geocoded) {
+          state.location = { 
+            city: geocoded.city, 
+            coords: { lat: geocoded.lat, lon: geocoded.lon }, 
+            zipCode: null, 
+            radius: state.location?.radius || 10, // Default to 10 miles if no previous radius
+            display_name: geocoded.display_name
+          };
+          SESS.set(sid, state);
+          return res.json({ 
+            html: `✅ Updated location to ${geocoded.city} (${state.location.radius} mile radius).`,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: state.mode === 'quiz' ? `Quiz in progress - Question ${state.questionNumber || 1}` : "Not started",
+              scores: state.scores
+            }
+          });
+        } else {
+          return res.json({ html: `❌ Could not find location "${locationUpdate.value}". Please try a different city name.` });
+        }
+      }
+    }
+
     const isStart = /^\s*(start|start quiz)\s*$/i.test(lastUser);
 
     // Extract location/date from any message and store in session
@@ -479,7 +547,7 @@ router.post("/chat", async (req, res) => {
             city: geocoded.city, 
             coords: { lat: geocoded.lat, lon: geocoded.lon }, 
             zipCode: null, 
-            radius: 25,
+            radius: 10,
             display_name: geocoded.display_name
           };
         } else {
@@ -488,7 +556,7 @@ router.post("/chat", async (req, res) => {
             city: courseIntent.location, 
             coords: null, 
             zipCode: null, 
-            radius: 25,
+            radius: 10,
             needsClarification: true
           };
         }
