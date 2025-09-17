@@ -304,7 +304,15 @@ router.post("/chat", async (req, res) => {
     // Handle quiz start FIRST, before RAG - using direct engine call
     if (isStart) {
       try {
-        const startAns = await startSession({});
+        // Check if we already have location and date information
+        const hasLocation = state.location && (state.location.coords || state.location.city);
+        const hasDate = state.availability && state.availability.date;
+        
+        const startAns = await startSession({
+          skipLocation: hasLocation,
+          location: state.location,
+          availability: state.availability
+        });
         if (!startAns) {
           SESS.set(sid, newChatState());
           return res.json({ html:"Sorry, I couldn't start the quiz right now." });

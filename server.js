@@ -119,6 +119,8 @@ app.get("/", (_req, res) => {
   .status{padding:8px;margin:8px 0;border-radius:6px;font-size:14px}
   .status.error{background:#ffe6e6;color:#d32f2f}
   .status.success{background:#e8f5e8;color:#2e7d32}
+  .quick-btn{padding:12px 16px;border:1px solid var(--border);border-radius:6px;background:#fff;color:#2c3e50;text-align:left;font-size:14px;cursor:pointer;transition:all 0.2s;font-weight:500}
+  .quick-btn:hover{background:#f8f9fa;border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -136,8 +138,13 @@ app.get("/", (_req, res) => {
       </div>
     </div>
     <div class="card">
-      <h2 style="margin-top:0">Debug Info</h2>
-      <div id="side" class="muted">Loading status...</div>
+      <h2 style="margin-top:0">Quick Actions</h2>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="quick-btn" onclick="sendQuickMessage('start')">🎯 Start Quiz</button>
+        <button class="quick-btn" onclick="sendQuickMessage('courses near me')">📍 Courses Near Me</button>
+        <button class="quick-btn" onclick="sendQuickMessage('beginner courses')">🏌️ Beginner Courses</button>
+        <button class="quick-btn" onclick="sendQuickMessage('best courses this weekend')">⭐ Best This Weekend</button>
+      </div>
     </div>
   </div>
 
@@ -178,6 +185,11 @@ app.get("/", (_req, res) => {
     }catch(e){
       render('Error: ' + (e.message || e), false);
     }
+  }
+
+  function sendQuickMessage(text){
+    box.value = text;
+    sendMessage();
   }
 
   async function resetSession(){
