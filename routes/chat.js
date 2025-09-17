@@ -853,6 +853,7 @@ router.post("/chat", async (req, res) => {
           state.mode="quiz";
           state.sessionId=startAns.sessionId;
           state.question=startAns.question;
+          state.questionNumber=startAns.questionNumber || 1; // Set initial question number
           state.pendingQuizSuggestion = null; // Clear the pending suggestion
           SESS.set(sid,state);
           return res.json({ 
@@ -861,7 +862,7 @@ router.post("/chat", async (req, res) => {
             profile: {
               location: state.location,
               availability: state.availability,
-              quizProgress: "Quiz started - question 1",
+              quizProgress: `Quiz started - Question ${state.questionNumber}`,
               scores: state.scores
             }
           });
@@ -1070,14 +1071,17 @@ router.post("/chat", async (req, res) => {
 
         if (!startAns || !startAns.question) return res.json({ html:"Sorry, I couldn't start the quiz. Try again." });
 
-        state.needsWhen=false; state.question=startAns.question; SESS.set(sid,state);
+        state.needsWhen=false; 
+        state.question=startAns.question; 
+        state.questionNumber=startAns.questionNumber || 1; // Set initial question number
+        SESS.set(sid,state);
         return res.json({ 
           html: renderQuestionHTML(state.question), 
           suppressSidecar:true,
           profile: {
             location: state.location,
             availability: state.availability,
-            quizProgress: `Quiz in progress - Question ${state.questionNumber || 1}`,
+            quizProgress: `Quiz in progress - Question ${state.questionNumber}`,
             scores: state.scores
           }
         });
@@ -1125,6 +1129,10 @@ router.post("/chat", async (req, res) => {
           return res.json({ html });
         }
         if (state.question){ 
+          // Update question number from the API response
+          if (apiAns.questionNumber) {
+            state.questionNumber = apiAns.questionNumber;
+          }
           SESS.set(sid,state); 
           return res.json({ 
             html: renderQuestionHTML(state.question), 
@@ -1205,6 +1213,10 @@ router.post("/chat", async (req, res) => {
           return res.json({ html });
         }
         if (state.question){ 
+          // Update question number from the API response
+          if (ftAns.questionNumber) {
+            state.questionNumber = ftAns.questionNumber;
+          }
           SESS.set(sid,state); 
           return res.json({ 
             html: renderQuestionHTML(state.question), 
@@ -1215,7 +1227,7 @@ router.post("/chat", async (req, res) => {
               quizProgress: `Quiz in progress - Question ${state.questionNumber || 1}`,
               scores: state.scores
             }
-          }); 
+          });
         }
         return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
       } catch (error) {
