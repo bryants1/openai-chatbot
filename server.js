@@ -1,5 +1,5 @@
 // server.js
-// ── .env loader FIRST - before any other imports ─────────────────────────
+// -- .env loader FIRST - before any other imports -------------------------
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
@@ -49,7 +49,7 @@ if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 
-// ── Setup clients AFTER env is loaded ─────────────────────────────────
+// -- Setup clients AFTER env is loaded ----------------------------------
 import OpenAI from "openai";
 
 export const openai = new OpenAI({
@@ -80,7 +80,7 @@ const supabase = createClient(
 
 console.log(`[supabase] Client initialized`);
 
-// ── Rest of server setup ───────────────────────────────────────────────
+// -- Rest of server setup -------------------------------------------------
 import express from "express";
 import cors from "cors";
 import chatRouter, { clearSessions } from "./routes/chat.js";
@@ -89,6 +89,31 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
+
+// --- PID file management -------------------------------------------------
+const PID_PATH = path.join(__dirname, "server.pid");
+
+function writePidFile() {
+  try {
+    fs.writeFileSync(PID_PATH, String(process.pid));
+    console.log(`[server] Wrote PID ${process.pid} to ${PID_PATH}`);
+  } catch (e) {
+    console.warn(`[server] Could not write PID file at ${PID_PATH}:`, e.message);
+  }
+}
+
+function removePidFile() {
+  try {
+    if (!fs.existsSync(PID_PATH)) return;
+    const content = fs.readFileSync(PID_PATH, "utf8").trim();
+    if (content === String(process.pid)) {
+      fs.unlinkSync(PID_PATH);
+      console.log(`[server] Removed PID file ${PID_PATH}`);
+    }
+  } catch (e) {
+    console.warn(`[server] Could not remove PID file ${PID_PATH}:`, e.message);
+  }
+}
 
 // Main chat interface
 app.get("/", (_req, res) => {
@@ -224,25 +249,25 @@ app.get("/", (_req, res) => {
           const lon = position.coords.longitude;
           
           // Reverse geocode to get city name
-          const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+          const response = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=' + lat + '&longitude=' + lon + '&localityLanguage=en');
           const data = await response.json();
           
           let locationName = '';
           if (data.city && data.principalSubdivision) {
-            locationName = `${data.city}, ${data.principalSubdivision}`;
+            locationName = data.city + ', ' + data.principalSubdivision;
           } else if (data.locality) {
             locationName = data.locality;
           } else {
-            locationName = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+            locationName = lat.toFixed(4) + ', ' + lon.toFixed(4);
           }
           
           // Send the location-based search
-          box.value = `courses near ${locationName}`;
+          box.value = 'courses near ' + locationName;
           sendMessage();
         } catch (error) {
           console.error('Geocoding error:', error);
           // Fallback to coordinates
-          box.value = `courses near ${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`;
+          box.value = 'courses near ' + position.coords.latitude.toFixed(4) + ', ' + position.coords.longitude.toFixed(4);
           sendMessage();
         }
       },
@@ -394,7 +419,10 @@ app.get("/", (_req, res) => {
     if (profileData.availability) {
       const dateEl = document.getElementById('date-info');
       if (dateEl) {
-        if (profileData.availability.date) {
+        if (profileData.availability && profileData.availability.original) {
+          // Show the original date string (e.g., "this weekend", "today")
+          dateEl.textContent = profileData.availability.original;
+        } else if (profileData.availability && profileData.availability.date) {
           // Format the date for better readability
           const date = new Date(profileData.availability.date);
           const options = { 
@@ -405,7 +433,7 @@ app.get("/", (_req, res) => {
           };
           dateEl.textContent = date.toLocaleDateString('en-US', options);
         } else {
-          dateEl.textContent = 'Set';
+          dateEl.textContent = 'Not set';
         }
       }
     }
@@ -513,7 +541,7 @@ app.get("/", (_req, res) => {
 // Mount chat routes
 app.use("/api", chatRouter);
 
-// ── Profile API Routes ─────────────────────────────────────────────────
+// -- Profile API Routes -------------------------------------------------
 app.post("/api/profile-session-start", async (req, res) => {
   try {
     const { user_id, session_id, seed } = req.body;
@@ -649,7 +677,7 @@ app.post("/api/ping", (req, res) => {
 });
 
 
-// ── Debug endpoints ────────────────────────────────────────────────────
+// -- Debug endpoints -----------------------------------------------------
 app.get("/api/debug/status", async (req, res) => {
   const status = {
     openai: !!process.env.OPENAI_API_KEY,
@@ -667,6 +695,49 @@ app.get("/api/debug/status", async (req, res) => {
     }
   };
   res.json(status);
+});
+
+// Test endpoint to check course database state values
+app.get("/api/debug/courses", async (req, res) => {
+  if (!courseQdrant) {
+    return res.json({ error: "Course database not available" });
+  }
+  
+  try {
+    const collection = process.env.COURSE_COLLECTION || "courses";
+    
+    // Get all courses and extract unique state values
+    const results = await courseQdrant.scroll(collection, {
+      with_payload: true,
+      with_vectors: false,
+      limit: 200
+    });
+    
+    const states = [...new Set(results.points.map(p => p.payload.state).filter(Boolean))];
+    const waylandCourses = results.points.filter(p => 
+      p.payload.course_name && p.payload.course_name.toLowerCase().includes('wayland')
+    );
+    const sandyBurrCourses = results.points.filter(p => 
+      p.payload.course_name && p.payload.course_name.toLowerCase().includes('sandy')
+    );
+    
+    res.json({
+      total_courses: results.points.length,
+      unique_states: states,
+      wayland_courses: waylandCourses.map(p => ({
+        name: p.payload.course_name,
+        state: p.payload.state,
+        url: p.payload.course_url || p.payload.website
+      })),
+      sandy_burr_courses: sandyBurrCourses.map(p => ({
+        name: p.payload.course_name,
+        state: p.payload.state,
+        url: p.payload.course_url || p.payload.website
+      }))
+    });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
 });
 
 app.get("/api/debug/qdrant", async (req, res) => {
@@ -720,19 +791,19 @@ app.get("/api/debug/supabase", async (req, res) => {
   }
 });
 
-// ── Test HTML Rendering ─────────────────────────────────────────────────
+// -- Test HTML Rendering -------------------------------------------------
 app.get("/api/test-html", (req, res) => {
   const testHtml = '<p>Test: <a href="#" onclick="alert(\'Link clicked!\'); return false;">Click me</a></p>';
   res.json({ html: testHtml });
 });
 
-// ── Helper Functions ─────────────────────────────────────────────────
+// -- Helper Functions ---------------------------------------------------
 async function embedQuery(q) {
   const { data } = await openai.embeddings.create({ model: "text-embedding-3-small", input: q });
   return data[0].embedding;
 }
 
-// ── Course Profile API ─────────────────────────────────────────────────
+// -- Course Profile API -------------------------------------------------
   app.get("/api/course-profile", async (req, res) => {
   try {
     const rawUrl = String(req.query.url || "").trim();
@@ -930,9 +1001,50 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`[server] Listening on port ${PORT}`);
-  console.log(`[server] Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`[server] Visit http://localhost:${PORT} to test`);
-});
+// Robust listener: try PORT, then fallback to next few ports if busy
+const BASE_PORT = Number(process.env.PORT) || 8080;
+const MAX_TRIES = 5; // try BASE_PORT, BASE_PORT+1, ...
+
+let currentServer = null;
+
+function startListening(port, attempt = 0) {
+  const server = app.listen(port, () => {
+    console.log(`[server] Listening on port ${port}`);
+    console.log(`[server] Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`[server] Visit http://localhost:${port} to test`);
+    currentServer = server;
+    writePidFile();
+  });
+
+  server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE' && attempt < MAX_TRIES) {
+      const nextPort = port + 1;
+      console.warn(`[server] Port ${port} in use. Retrying on ${nextPort}...`);
+      try { server.close(); } catch {}
+      setTimeout(() => startListening(nextPort, attempt + 1), 150);
+    } else {
+      console.error('[server] Failed to bind port:', err);
+      process.exit(1);
+    }
+  });
+}
+
+startListening(BASE_PORT);
+
+// Graceful shutdown and PID cleanup
+function shutdown(code = 0) {
+  try { removePidFile(); } catch {}
+  if (currentServer) {
+    try {
+      currentServer.close(() => process.exit(code));
+      return;
+    } catch {}
+  }
+  process.exit(code);
+}
+
+process.on('SIGINT', () => { console.log('[server] SIGINT'); shutdown(0); });
+process.on('SIGTERM', () => { console.log('[server] SIGTERM'); shutdown(0); });
+process.on('exit', () => { try { removePidFile(); } catch {} });
+process.on('uncaughtException', (err) => { console.error('[server] Uncaught', err); shutdown(1); });
+process.on('unhandledRejection', (err) => { console.error('[server] UnhandledRejection', err); shutdown(1); });

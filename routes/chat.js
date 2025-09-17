@@ -562,6 +562,58 @@ async function retrieveSite(question, topK=120){
   }
 }
 
+async function retrieveCourses(question, topK=20){
+  if (!courseQdrant) {
+    console.warn("[rag] Course Qdrant not available");
+    return [];
+  }
+  try {
+    // Extract location from question for filtering
+    const location = extractLocation(question);
+    const collection = process.env.COURSE_COLLECTION || "courses";
+    
+    // Try to find courses by state
+    let stateToSearch = null;
+    if (location && location.includes(',')) {
+      stateToSearch = location.split(',')[1]?.trim();
+    } else if (location && location.toLowerCase().includes('massachusetts')) {
+      stateToSearch = 'massachusetts';
+    }
+    
+    if (stateToSearch) {
+      console.log(`[course-search] Looking for state: "${stateToSearch}"`);
+      // Try different state formats
+      const stateVariants = [stateToSearch, stateToSearch.toUpperCase(), stateToSearch.toLowerCase()];
+      if (stateToSearch === 'MA') {
+        stateVariants.push('Massachusetts', 'MASSACHUSETTS', 'massachusetts');
+      } else if (stateToSearch.toLowerCase() === 'massachusetts') {
+        stateVariants.push('MA', 'ma');
+      }
+      
+      for (const stateVariant of stateVariants) {
+        console.log(`[course-search] Trying state variant: "${stateVariant}"`);
+        const results = await courseQdrant.scroll(collection, {
+          filter: { must: [{ key: "payload.state", match: { value: stateVariant } }] },
+          with_payload: true,
+          with_vectors: false,
+          limit: topK
+        });
+        console.log(`[course-search] Found ${results?.points?.length || 0} courses for state "${stateVariant}"`);
+        if (results?.points?.length > 0) {
+          return results.points;
+        }
+      }
+    }
+    
+    // No fallback vector search - course database uses different vector size
+    console.log("[course-search] No courses found with state filtering");
+    return [];
+  } catch (error) {
+    console.warn("[rag] Course search failed:", error.message);
+    return [];
+  }
+}
+
 async function voyageRerank(query,hits,topN=40){
   try{
     const key=(process.env.VOYAGE_API_KEY||"").trim();
@@ -787,37 +839,37 @@ router.post("/chat", async (req, res) => {
       if (intent.location && !state.location) {
         // Geocode the location to get coordinates
         const geocoded = await geocodeCity(intent.location);
-        if (geocoded) {
-          if (geocoded.ambiguous) {
-            // Multiple states found - ask for clarification
+          if (geocoded) {
+            if (geocoded.ambiguous) {
+              // Multiple states found - ask for clarification
+              state.location = { 
+                city: geocoded.city, 
+                coords: null, 
+                zipCode: null, 
+                radius: 10,
+                needsStateClarification: true,
+                availableStates: geocoded.states
+              };
+            } else {
+            // Single result found
+              state.location = { 
+                city: geocoded.city, 
+                coords: { lat: geocoded.lat, lon: geocoded.lon }, 
+                zipCode: null, 
+                radius: 10,
+                display_name: geocoded.display_name,
+                state: geocoded.state
+              };
+            }
+          } else {
+            // If geocoding fails, store just the city name and ask for clarification
             state.location = { 
-              city: geocoded.city, 
+            city: intent.location, 
               coords: null, 
               zipCode: null, 
               radius: 10,
-              needsStateClarification: true,
-              availableStates: geocoded.states
+              needsClarification: true
             };
-          } else {
-            // Single result found
-            state.location = { 
-              city: geocoded.city, 
-              coords: { lat: geocoded.lat, lon: geocoded.lon }, 
-              zipCode: null, 
-              radius: 10,
-              display_name: geocoded.display_name,
-              state: geocoded.state
-            };
-          }
-        } else {
-          // If geocoding fails, store just the city name and ask for clarification
-          state.location = { 
-            city: intent.location, 
-            coords: null, 
-            zipCode: null, 
-            radius: 10,
-            needsClarification: true
-          };
         }
       }
       if (intent.dateInfo && !state.availability) {
@@ -853,7 +905,7 @@ router.post("/chat", async (req, res) => {
               const daysUntilSaturday = (6 - today.getDay()) % 7;
               if (daysUntilSaturday === 0 && today.getDay() !== 6) {
                 nextSaturday.setDate(today.getDate() + 7); // Next week's Saturday
-              } else {
+        } else {
                 nextSaturday.setDate(today.getDate() + daysUntilSaturday);
               }
               actualDate = nextSaturday.toISOString().split('T')[0];
@@ -863,17 +915,17 @@ router.post("/chat", async (req, res) => {
               const parsedDate = new Date(dateString);
               if (!isNaN(parsedDate.getTime())) {
                 actualDate = parsedDate.toISOString().split('T')[0];
-              } else {
+          } else {
                 actualDate = dateString; // Keep original if can't parse
               }
           }
           
-          state.availability = {
+        state.availability = {
             date: actualDate,
             type: dateType,
             original: dateString // Keep original for reference
-          };
-        }
+        };
+      }
       }
       if (intent.location || intent.dateInfo) {
         SESS.set(sid, state);
@@ -1103,7 +1155,17 @@ router.post("/chat", async (req, res) => {
         const locForQuery = extractLocation(lastUser);
         const variants = [
           lastUser, lastUser.toLowerCase(), lastUser.replace(/[^\w\s]/g, " "),
-          ...(locForQuery ? [`golf courses in ${locForQuery}`, `${locForQuery} golf courses`, `courses near ${locForQuery}`] : [])
+          ...(locForQuery ? [
+            `golf courses in ${locForQuery}`, 
+            `${locForQuery} golf courses`, 
+            `courses near ${locForQuery}`,
+            // Also search for city name without state if location includes state
+            ...(locForQuery.includes(',') ? [
+              `golf courses in ${locForQuery.split(',')[0].trim()}`,
+              `${locForQuery.split(',')[0].trim()} golf courses`,
+              `courses near ${locForQuery.split(',')[0].trim()}`
+            ] : [])
+          ] : [])
         ].filter(Boolean);
 
         let siteHits=[];
@@ -1113,6 +1175,16 @@ router.post("/chat", async (req, res) => {
           if (siteHits.length >= 120) break;
         }
         siteHits = await voyageRerank(lastUser, siteHits, 40);
+
+        // Also search for courses in the course database
+        let courseHits=[];
+        for (const v of variants){
+          const hits=await retrieveCourses(v,20);
+          console.log(`Course search for "${v}":`, hits?.length || 0, 'results');
+          courseHits=[...courseHits, ...(hits||[])];
+          if (courseHits.length >= 20) break;
+        }
+        console.log('Total course hits:', courseHits.length);
 
         // dedupe
         const seen = new Set();
@@ -1135,7 +1207,7 @@ router.post("/chat", async (req, res) => {
 
         const keep = new Map();
         for (const h of good.slice(0, 20)){ const key=h?.payload?.url || ""; if(!keep.has(key)) keep.set(key,h); }
-        const finalHits = [...keep.values()].slice(0, isListIntent(lastUser) ? 12 : 10);
+        const finalHits = [...keep.values()].slice(0, isListIntent(lastUser) ? 8 : 6); // Reduced from 12/10 to 8/6
 
         const MAX_CHARS=12000; let context="", links=[];
         for (let i=0;i<finalHits.length;i++){
@@ -1146,33 +1218,59 @@ router.post("/chat", async (req, res) => {
           const block = `[${i+1}] ${url}\n${title?title+"\n":""}${txt}\n---\n`;
           if (context.length + block.length > MAX_CHARS) break;
           context += block;
-          // Extract course name with better fallback logic
-          let name = h?.payload?.course_name || h?.payload?.h1 || h?.payload?.title;
+          // Extract name based on content type
+          let name = h?.payload?.title || h?.payload?.h1 || h?.payload?.course_name;
           
           // If no name found, try to extract from URL or text
           if (!name || name === url) {
-            // Try to extract course name from URL path
+            // For course pages, try to extract course name from URL path
             const urlMatch = url.match(/\/courses\/([^\/]+)/);
             if (urlMatch) {
               name = urlMatch[1].replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
             } else {
-              // Try to extract from text content
-              const textMatch = txt.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Country Club|Golf Club|Golf Course))/);
-              if (textMatch) {
-                name = textMatch[1];
+              // For articles, try multiple extraction methods
+              // 1. Look for article title in URL path
+              const articleMatch = url.match(/\/articles\/([^\/]+)/);
+              if (articleMatch) {
+                name = articleMatch[1].replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
               } else {
-                name = url; // Fallback to URL
+                // 2. Use the first line of text as title if available
+                const firstLine = txt.split('\n')[0]?.trim();
+                if (firstLine && firstLine.length > 10 && firstLine.length < 150) {
+                  name = firstLine;
+                } else {
+                  // 3. Try to extract course name from text content for course pages
+                  const textMatch = txt.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Country Club|Golf Club|Golf Course))/);
+                  if (textMatch) {
+                    name = textMatch[1];
+                  } else {
+                    name = url; // Fallback to URL
+                  }
+                }
               }
             }
           }
           
-          links.push({ url, name });
+          // Only add if name is meaningful and not too generic
+          if (name && name.length > 5 && name !== url && !name.includes('|')) {
+            links.push({ url, name });
+          }
         }
 
-        // Build course names list for the AI to use
-        const courseNames = links.map(l => l.name).filter(Boolean);
+        // Add course hits to links array
+        for (const h of courseHits.slice(0, 5)) { // Reduced from 10 to 5
+          const url = h?.payload?.url || h?.payload?.course_url || "";
+          const name = h?.payload?.course_name || h?.payload?.name || "";
+          if (url && name && !links.some(l => l.url === url) && name.length > 5) {
+            links.push({ url, name });
+          }
+        }
+
+        // Build course names list for the AI to use (limit to top 5 to prevent overwhelming)
+        const topLinks = links.slice(0, 5); // Limit to top 5 links to prevent AI confusion
+        const courseNames = topLinks.map(l => l.name).filter(Boolean);
         const courseNamesText = courseNames.length > 0 ? 
-          `\n# Available Course Names (use these exact names in your response):
+          `\n# Available Course Names (use ONLY 1-2 of these exact names in your response):
 ${courseNames.map(name => `- ${name}`).join('\n')}` : '';
         
 
@@ -1218,40 +1316,26 @@ ${courseNames.map(name => `- ${name}`).join('\n')}` : '';
 
         const sections=[];
         if (reply && reply !== REFUSAL) {
-          // Create course name to URL mapping for direct replacement
-          const courseMap = new Map();
-          for (const link of links) {
-            if (link.name && link.url) {
-              courseMap.set(link.name.toLowerCase(), link.url);
+          // Check for repetitive text and truncate if needed
+          let cleanReply = reply;
+          if (reply.length > 2000) {
+            // If response is too long, it might be repetitive - truncate it
+            cleanReply = reply.substring(0, 2000) + "...";
+          }
+          
+          // Simple post-processing: convert course names to clickable links
+          for (const link of topLinks.slice(0, 2)) { // Only process top 2 links to avoid confusion
+            if (link.name && link.url && link.name.length > 5) {
+              const safeUrl = link.url.replace(/"/g, '%22');
+              const escapedName = link.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const regex = new RegExp(`\\b${escapedName}\\b`, 'gi');
+              cleanReply = cleanReply.replace(regex, (match) => 
+                `<a href="#" onclick="showCourseProfile('${safeUrl}'); return false;">${match}</a>`
+              );
             }
           }
           
-          // Replace course names in the reply with clickable links
-          let processedReply = reply;
-          for (const [courseName, url] of courseMap) {
-            const safeUrl = url.replace(/"/g, '%22');
-            
-            // Only replace if it's a proper course name (not generic words like "courses")
-            if (courseName && courseName.length > 3 && !courseName.includes('http') && !courseName.includes('courses')) {
-              // Try multiple variations of the course name
-              const variations = [
-                courseName,
-                courseName + 'Country Club', // Handle duplication
-                courseName + 'Golf Club',
-                courseName + 'Golf Course'
-              ];
-              
-              for (const variation of variations) {
-                const regex = new RegExp(`\\b${variation.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\b`, 'gi');
-                processedReply = processedReply.replace(regex, (match) => 
-                  `<a href="#" onclick="showCourseProfile('${safeUrl}'); return false;">${match}</a>`
-                );
-              }
-            }
-          }
-          
-          // Since processedReply already contains HTML links, wrap it in a paragraph
-          sections.push(`<p>${processedReply}</p>`);
+          sections.push(`<p>${cleanReply}</p>`);
         } else {
           sections.push("Here are relevant pages on our site:");
           if (links.length) {
@@ -1269,7 +1353,10 @@ ${courseNames.map(name => `- ${name}`).join('\n')}` : '';
             sections.push("<strong>Courses</strong><br/>" + html);
           }
         }
-        return res.json({ html: sections.join("<br/><br/>") });
+        return res.json({ 
+          html: sections.join("<br/><br/>"),
+          links: links.length > 0 ? links : null
+        });
 
       } catch (error) {
         console.warn("[rag] RAG failed:", error.message);
@@ -1325,7 +1412,14 @@ ${courseNames.map(name => `- ${name}`).join('\n')}` : '';
     if (state.mode==="quiz" && state.needsWhen && lastUser.startsWith("WHEN:")) {
       try {
         const [_,from="",to="",bucket=""] = lastUser.split(":");
-        state.availability = { ...(from && {from}), ...(to && {to}), ...(bucket && {bucket}) };
+        // Set availability with proper date formatting for frontend display
+        state.availability = { 
+          ...(from && {from}), 
+          ...(to && {to}), 
+          ...(bucket && {bucket}),
+          date: from, // Set the date for frontend display
+          original: from // Set the original date string for frontend display
+        };
         SESS.set(sid,state);
 
         // Availability stored in session only, not saved to database
