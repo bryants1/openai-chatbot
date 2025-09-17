@@ -848,21 +848,18 @@ router.post("/chat", async (req, res) => {
           });
         }
         
-        // If we have both location and date, start with first question
+        // If we have both location and date, show quiz suggestion instead of starting immediately
         if (startAns.question) {
-          state.mode="quiz";
-          state.sessionId=startAns.sessionId;
-          state.question=startAns.question;
-          state.questionNumber=startAns.questionNumber || 1; // Set initial question number
-          state.pendingQuizSuggestion = null; // Clear the pending suggestion
-          SESS.set(sid,state);
+          // Don't start the quiz yet - show suggestion first
+          const suggestionHTML = renderQuizSuggestionHTML(courseIntent, state);
+          state.pendingQuizSuggestion = courseIntent;
+          SESS.set(sid, state);
           return res.json({ 
-            html: renderQuestionHTML(state.question), 
-            suppressSidecar:true,
+            html: suggestionHTML,
             profile: {
               location: state.location,
               availability: state.availability,
-              quizProgress: `Quiz started - Question ${state.questionNumber}`,
+              quizProgress: "Quiz suggested",
               scores: state.scores
             }
           });
@@ -872,6 +869,15 @@ router.post("/chat", async (req, res) => {
         console.error("Quiz start from suggestion error:", error);
         return res.json({ html:"Sorry, I couldn't start the quiz right now." });
       }
+    }
+
+    // Handle "no" response to quiz suggestion - do regular course search
+    if (state.pendingQuizSuggestion && (lastUser.toLowerCase() === 'no' || lastUser.toLowerCase() === 'n')) {
+      // Clear the pending suggestion and do a regular course search
+      state.pendingQuizSuggestion = null;
+      SESS.set(sid, state);
+      
+      // Continue to RAG search below
     }
 
     // Handle quiz start FIRST, before RAG - using direct engine call
