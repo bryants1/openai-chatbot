@@ -896,7 +896,16 @@ router.post("/chat", async (req, res) => {
         if (!startAns || !startAns.question) return res.json({ html:"Sorry, I couldn't start the quiz. Try again." });
 
         state.needsWhen=false; state.question=startAns.question; SESS.set(sid,state);
-        return res.json({ html: renderQuestionHTML(state.question), suppressSidecar:true });
+        return res.json({ 
+          html: renderQuestionHTML(state.question), 
+          suppressSidecar:true,
+          profile: {
+            location: state.location,
+            availability: state.availability,
+            quizProgress: `Quiz in progress - Question ${state.questionNumber || 1}`,
+            scores: state.scores
+          }
+        });
       } catch (error) {
         console.error("Quiz WHEN capture error:", error);
         return res.json({ html:"Sorry, I couldn't continue the quiz. Try again." });
@@ -940,7 +949,19 @@ router.post("/chat", async (req, res) => {
           const html = renderFinalProfileHTML(apiAns.profile, apiAns.scores ?? state.scores, apiAns.totalQuestions ?? 0).replace(/\n/g,"<br/>");
           return res.json({ html });
         }
-        if (state.question){ SESS.set(sid,state); return res.json({ html: renderQuestionHTML(state.question), suppressSidecar:true }); }
+        if (state.question){ 
+          SESS.set(sid,state); 
+          return res.json({ 
+            html: renderQuestionHTML(state.question), 
+            suppressSidecar:true,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: `Quiz in progress - Question ${state.questionNumber || 1}`,
+              scores: state.scores
+            }
+          }); 
+        }
         return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
       } catch (error) {
         console.error("Quiz answer error:", error);
@@ -1008,7 +1029,19 @@ router.post("/chat", async (req, res) => {
           const html = renderFinalProfileHTML(ftAns.profile, ftAns.scores ?? state.scores, ftAns.totalQuestions ?? 0).replace(/\n/g,"<br/>");
           return res.json({ html });
         }
-        if (state.question){ SESS.set(sid,state); return res.json({ html: renderQuestionHTML(state.question), suppressSidecar:true }); }
+        if (state.question){ 
+          SESS.set(sid,state); 
+          return res.json({ 
+            html: renderQuestionHTML(state.question), 
+            suppressSidecar:true,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: `Quiz in progress - Question ${state.questionNumber || 1}`,
+              scores: state.scores
+            }
+          }); 
+        }
         return res.json({ html:"Thanks! I couldn't fetch the next question; try 'start' again." });
       } catch (error) {
         console.error("Quiz text answer error:", error);
