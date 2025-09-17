@@ -97,9 +97,9 @@ function detectCourseSearchIntent(text = "") {
   const t = (text || "").toLowerCase();
   
   const courseKeywords = [
-    'course', 'courses', 'golf course', 'golfing', 'play golf', 'tee time',
-    'beginner', 'intermediate', 'advanced', 'difficulty', 'skill level',
-    'looking for', 'find', 'recommend', 'suggest', 'best course'
+    'course', 'courses', 'golf course', 'golfing', 'play golf', 'play', 'tee time', 
+    'beginner', 'intermediate', 'advanced', 'difficulty', 'skill level', 
+    'looking for', 'find', 'recommend', 'suggest', 'best course', 'want to play'
   ];
 
   const locationKeywords = [
@@ -509,7 +509,7 @@ router.post("/chat", async (req, res) => {
     if (!isStart && !state.mode) {
       const courseIntent = detectCourseSearchIntent(lastUser);
       console.log('Course intent detection:', { lastUser, courseIntent });
-      if (courseIntent.isCourseSearch && courseIntent.confidence > 0.5) {
+      if (courseIntent.isCourseSearch && courseIntent.confidence > 0.3) {
         // Show quiz suggestion with detected location/date
         const suggestionHTML = renderQuizSuggestionHTML(courseIntent, state);
         state.pendingQuizSuggestion = courseIntent;

@@ -102,7 +102,7 @@ app.get("/", (_req, res) => {
   :root{--bg:#fafafa;--fg:#222;--muted:#777;--card:#fff;--border:#e5e5e5;--accent:#0a7}
   *{box-sizing:border-box}
   body{margin:0;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
-  .wrap{max-width:1100px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:2fr 1fr;gap:24px}
+  .wrap{max-width:1400px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:1fr 2fr 1fr;gap:24px}
   .card{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,0.1)}
   .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
   h1{margin:0;font-size:18px;font-weight:700;color:var(--fg);background:linear-gradient(135deg, var(--accent), var(--accent-hover));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
@@ -129,38 +129,40 @@ app.get("/", (_req, res) => {
 </head>
 <body>
   <div class="wrap">
+    <!-- Left Panel: Quick Actions -->
+    <div class="card">
+      <h2 style="margin-top:0">Quick Actions</h2>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button class="quick-btn" onclick="sendQuickMessage('start')">
+          🎯 Start Quiz
+        </button>
+        <button class="quick-btn" onclick="sendQuickMessage('courses near me')">
+          📍 Courses Near Me
+        </button>
+        <button class="quick-btn" onclick="sendQuickMessage('beginner courses')">
+          🏌️ Beginner Courses
+        </button>
+        <button class="quick-btn" onclick="sendQuickMessage('best courses this weekend')">
+          ⭐ Best This Weekend
+        </button>
+      </div>
+    </div>
+
+    <!-- Center Panel: Chat -->
     <div class="card">
       <div class="header">
         <h1>Golf Course Assistant</h1>
         <button class="reset-btn" onclick="resetSession()">Reset Session</button>
       </div>
       <div class="muted">Type <code>start</code> to begin the quiz, or ask for courses.</div>
-      
-      <!-- Quick Actions Panel -->
-      <div style="margin: 16px 0; padding: 12px; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef;">
-        <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #495057; font-weight: 600;">Quick Actions</h3>
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          <button class="quick-btn" onclick="sendQuickMessage('start')">
-            🎯 Start Quiz
-          </button>
-          <button class="quick-btn" onclick="sendQuickMessage('courses near me')">
-            📍 Courses Near Me
-          </button>
-          <button class="quick-btn" onclick="sendQuickMessage('beginner courses')">
-            🏌️ Beginner Courses
-          </button>
-          <button class="quick-btn" onclick="sendQuickMessage('best courses this weekend')">
-            ⭐ Best This Weekend
-          </button>
-        </div>
-      </div>
-      
       <div id="log"></div>
       <div class="row">
         <textarea id="box" placeholder="Type a message…"></textarea>
         <button id="btn">Send</button>
       </div>
     </div>
+
+    <!-- Right Panel: Profile & Status -->
     <div class="card">
       <h2 style="margin-top:0">Profile & Status</h2>
       <div id="profile-panel">
