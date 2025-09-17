@@ -133,22 +133,23 @@ function extractLocation(text = "") {
   const t = (text || "").trim();
   
   // Look for patterns like "near wayland", "in boston", "around newton"
-  let m = t.match(/\b(?:in|near|around|close to|at)\s+([A-Za-z][A-Za-z\s-]{1,30})(?:\s+(?:this|next|weekend|today|tomorrow|morning|afternoon|evening))?/i);
+  // Stop at time words like "this weekend", "today", etc.
+  let m = t.match(/\b(?:in|near|around|close to|at)\s+([A-Za-z][A-Za-z\s-]*?)(?:\s+(?:this|next|weekend|today|tomorrow|morning|afternoon|evening)|$)/i);
   if (m) {
     const location = m[1].trim();
-    // Remove common time words that might have been captured
+    // Remove any trailing time words that might have been captured
     return location.replace(/\s+(this|next|weekend|today|tomorrow|morning|afternoon|evening)$/i, '').trim();
   }
   
   // Look for "courses in [location]"
-  m = t.match(/\bcourses?\s+(?:in|near|around|at)\s+([A-Za-z][A-Za-z\s-]{1,30})(?:\s+(?:this|next|weekend|today|tomorrow|morning|afternoon|evening))?/i);
+  m = t.match(/\bcourses?\s+(?:in|near|around|at)\s+([A-Za-z][A-Za-z\s-]*?)(?:\s+(?:this|next|weekend|today|tomorrow|morning|afternoon|evening)|$)/i);
   if (m) {
     const location = m[1].trim();
     return location.replace(/\s+(this|next|weekend|today|tomorrow|morning|afternoon|evening)$/i, '').trim();
   }
   
   // Look for "play at [location]"
-  m = t.match(/\bplay\s+(?:at|in|near|around)\s+([A-Za-z][A-Za-z\s-]{1,30})(?:\s+(?:this|next|weekend|today|tomorrow|morning|afternoon|evening))?/i);
+  m = t.match(/\bplay\s+(?:at|in|near|around)\s+([A-Za-z][A-Za-z\s-]*?)(?:\s+(?:this|next|weekend|today|tomorrow|morning|afternoon|evening)|$)/i);
   if (m) {
     const location = m[1].trim();
     return location.replace(/\s+(this|next|weekend|today|tomorrow|morning|afternoon|evening)$/i, '').trim();
