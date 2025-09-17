@@ -266,21 +266,18 @@ app.get("/", (_req, res) => {
       if (scoresEl) {
         const scoreCount = Object.keys(profileData.scores).length;
         if (scoreCount > 0) {
-          // Format the scores as a compact display
+          // Format the scores as a stacked display
           const scoreEntries = Object.entries(profileData.scores)
             .filter(([key, value]) => typeof value === 'number' && isFinite(value))
             .map(([key, value]) => {
               // Convert snake_case to readable format
               const readableKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
               return readableKey + ': ' + value.toFixed(1);
-            })
-            .slice(0, 3); // Show first 3 scores
+            });
           
           if (scoreEntries.length > 0) {
-            scoresEl.textContent = scoreEntries.join(', ');
-            if (Object.keys(profileData.scores).length > 3) {
-              scoresEl.textContent += '...';
-            }
+            // Create stacked display with line breaks
+            scoresEl.innerHTML = scoreEntries.join('<br>');
           } else {
             scoresEl.textContent = scoreCount + ' questions answered';
           }
