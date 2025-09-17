@@ -578,6 +578,36 @@ router.post("/chat", async (req, res) => {
       const courseIntent = detectCourseSearchIntent(lastUser);
       console.log('Course intent detection:', { lastUser, courseIntent });
       if (courseIntent.isCourseSearch && courseIntent.confidence > 0.3) {
+        // Check if we have location but no date - ask for date first
+        const hasLocation = state.location && (state.location.coords || state.location.city);
+        const hasDate = state.availability && state.availability.date;
+        
+        if (hasLocation && !hasDate) {
+          // We have location but no date - ask for date first
+          state.mode = "quiz";
+          state.needsWhen = true;
+          SESS.set(sid, state);
+          return res.json({
+            html: `
+              <div style="font-size:16px;margin:0 0 10px">When would you like to play?</div>
+              <div style="margin:10px 0">
+                <input type="date" id="playdate" style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-right:8px">
+                <button onclick="(function(){
+                  var date=document.getElementById('playdate').value.trim();
+                  var box=document.getElementById('box');
+                  if(box){ box.value='WHEN:'+date+'::any'; document.getElementById('btn').click(); }
+                })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">Continue</button>
+              </div>`,
+            suppressSidecar: true,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Quiz started - needs date",
+              scores: state.scores
+            }
+          });
+        }
+        
         // Show quiz suggestion with detected location/date
         const suggestionHTML = renderQuizSuggestionHTML(courseIntent, state);
         state.pendingQuizSuggestion = courseIntent;

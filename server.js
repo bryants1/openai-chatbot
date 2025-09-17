@@ -269,7 +269,11 @@ app.get("/", (_req, res) => {
           // Format the scores as a compact display
           const scoreEntries = Object.entries(profileData.scores)
             .filter(([key, value]) => typeof value === 'number' && isFinite(value))
-            .map(([key, value]) => key + ': ' + value.toFixed(1))
+            .map(([key, value]) => {
+              // Convert snake_case to readable format
+              const readableKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+              return readableKey + ': ' + value.toFixed(1);
+            })
             .slice(0, 3); // Show first 3 scores
           
           if (scoreEntries.length > 0) {
