@@ -139,7 +139,7 @@ app.get("/", (_req, res) => {
         <button class="quick-btn" onclick="sendQuickMessage('start')">
           🎯 Start Quiz
         </button>
-        <button class="quick-btn" onclick="sendQuickMessage('courses near me')">
+        <button class="quick-btn" onclick="getLocationAndSearch()">
           📍 Courses Near Me
         </button>
         <button class="quick-btn" onclick="sendQuickMessage('beginner courses')">
@@ -206,6 +206,71 @@ app.get("/", (_req, res) => {
   function sendQuickMessage(message) {
     box.value = message;
     sendMessage();
+  }
+
+  function getLocationAndSearch() {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by this browser.');
+      return;
+    }
+
+    // Show loading message
+    render('<strong>You:</strong>\\n📍 Getting your location...', true);
+    
+    navigator.geolocation.getCurrentPosition(
+      async function(position) {
+        try {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+          
+          // Reverse geocode to get city name
+          const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+          const data = await response.json();
+          
+          let locationName = '';
+          if (data.city && data.principalSubdivision) {
+            locationName = `${data.city}, ${data.principalSubdivision}`;
+          } else if (data.locality) {
+            locationName = data.locality;
+          } else {
+            locationName = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+          }
+          
+          // Send the location-based search
+          box.value = `courses near ${locationName}`;
+          sendMessage();
+        } catch (error) {
+          console.error('Geocoding error:', error);
+          // Fallback to coordinates
+          box.value = `courses near ${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`;
+          sendMessage();
+        }
+      },
+      function(error) {
+        console.error('Geolocation error:', error);
+        let errorMessage = 'Unable to get your location. ';
+        switch(error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage += 'Please allow location access and try again.';
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage += 'Location information is unavailable.';
+            break;
+          case error.TIMEOUT:
+            errorMessage += 'Location request timed out.';
+            break;
+          default:
+            errorMessage += 'An unknown error occurred.';
+            break;
+        }
+        render('<strong>System:</strong>\\n' + errorMessage, false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 300000 // 5 minutes
+      }
+    );
   }
 
   async function sendMessage(){
