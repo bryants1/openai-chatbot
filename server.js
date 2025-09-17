@@ -283,6 +283,17 @@ app.get("/", (_req, res) => {
       // Clear chat log
       log.innerHTML = '';
 
+      // Clear profile panel
+      const locationEl = document.getElementById('location-info');
+      const dateEl = document.getElementById('date-info');
+      const progressEl = document.getElementById('quiz-progress');
+      const scoresEl = document.getElementById('scores-info');
+      
+      if (locationEl) locationEl.textContent = 'Not set';
+      if (dateEl) dateEl.textContent = 'Not set';
+      if (progressEl) progressEl.textContent = 'Not started';
+      if (scoresEl) scoresEl.textContent = 'None yet';
+
       // Show confirmation
       render('Session reset! Server and browser cleared. Type "start" to begin a new quiz.', false);
 
@@ -564,7 +575,7 @@ app.use((err, req, res, next) => {
 
 app.post("/api/reset-session", (req, res) => {
   // Clear the server-side session map
-  SESS.clear();
+  clearSessions();
   console.log("[reset] Server-side sessions cleared");
   res.json({ ok: true, message: "Server sessions cleared" });
 });

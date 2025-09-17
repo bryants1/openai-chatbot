@@ -267,6 +267,11 @@ function renderQuizSuggestionHTML(intent, state) {
  * Session helpers
  * ────────────────────────────────────────────────────────────────────────── */
 const SESS = new Map();
+
+export function clearSessions() {
+  SESS.clear();
+  console.log("[reset] Chat sessions cleared");
+}
 function newChatState() {
   return {
     mode: null,
