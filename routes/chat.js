@@ -453,6 +453,110 @@ router.post("/chat", async (req, res) => {
       }
     }
 
+    // Handle quiz start from pending suggestion
+    if (state.pendingQuizSuggestion && (lastUser.toLowerCase() === 'yes' || lastUser.toLowerCase() === 'y')) {
+      try {
+        const hasLocation = state.location && (state.location.coords || state.location.city);
+        const hasDate = state.availability && state.availability.date;
+        
+        const startAns = await startSession({
+          skipLocation: hasLocation,
+          sessionId: state.sessionId,
+          location: state.location,
+          availability: state.availability
+        });
+        
+        if (!startAns) {
+          SESS.set(sid, newChatState());
+          return res.json({ html:"Sorry, I couldn't start the quiz right now." });
+        }
+        
+        if (startAns.needsLocation) {
+          state.mode="quiz";
+          state.sessionId=startAns.sessionId;
+          state.needsLocation=true;
+          state.pendingQuizSuggestion = null; // Clear the pending suggestion
+          SESS.set(sid,state);
+          return res.json({
+            html: `
+              <div style="font-size:16px;margin:0 0 10px">Where are you looking for golf courses?</div>
+              <div style="margin:10px 0">
+                <input type="text" id="zipcode" placeholder="ZIP (e.g., 02134)"
+                       style="padding:8px;border:1px solid #ddd;border-radius:6px;width:150px;margin-right:8px">
+                <select id="radius" style="padding:8px;border:1px solid #ddd;border-radius:6px">
+                  <option value="10">10 miles</option>
+                  <option value="25" selected>25 miles</option>
+                  <option value="50">50 miles</option>
+                </select>
+                <button onclick="(function(){
+                  var zip=document.getElementById('zipcode').value.trim();
+                  var radius=document.getElementById('radius').value.trim();
+                  var box=document.getElementById('box');
+                  if(box){ box.value='LOCATION:'+zip+':'+radius; document.getElementById('btn').click(); }
+                })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">Continue</button>
+              </div>`,
+            suppressSidecar:true,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Quiz started - needs location",
+              scores: state.scores
+            }
+          });
+        }
+        
+        if (startAns.needsWhen) {
+          state.mode="quiz";
+          state.sessionId=startAns.sessionId;
+          state.needsWhen=true;
+          state.pendingQuizSuggestion = null; // Clear the pending suggestion
+          SESS.set(sid,state);
+          return res.json({
+            html: `
+              <div style="font-size:16px;margin:0 0 10px">When would you like to play?</div>
+              <div style="margin:10px 0">
+                <input type="date" id="playdate" style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-right:8px">
+                <button onclick="(function(){
+                  var date=document.getElementById('playdate').value.trim();
+                  var box=document.getElementById('box');
+                  if(box){ box.value='WHEN:'+date+'::any'; document.getElementById('btn').click(); }
+                })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">Continue</button>
+              </div>`,
+            suppressSidecar:true,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Quiz started - needs date",
+              scores: state.scores
+            }
+          });
+        }
+        
+        // If we have both location and date, start with first question
+        if (startAns.question) {
+          state.mode="quiz";
+          state.sessionId=startAns.sessionId;
+          state.question=startAns.question;
+          state.pendingQuizSuggestion = null; // Clear the pending suggestion
+          SESS.set(sid,state);
+          return res.json({ 
+            html: renderQuestionHTML(state.question), 
+            suppressSidecar:true,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Quiz started - question 1",
+              scores: state.scores
+            }
+          });
+        }
+        
+      } catch (error) {
+        console.error("Quiz start from suggestion error:", error);
+        return res.json({ html:"Sorry, I couldn't start the quiz right now." });
+      }
+    }
+
     // Handle quiz start FIRST, before RAG - using direct engine call
     if (isStart) {
       try {
