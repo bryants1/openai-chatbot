@@ -83,7 +83,7 @@ console.log(`[supabase] Client initialized`);
 // ── Rest of server setup ───────────────────────────────────────────────
 import express from "express";
 import cors from "cors";
-import chatRouter from "./routes/chat.js";
+import chatRouter, { clearSessions } from "./routes/chat.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -563,21 +563,20 @@ app.get("/api/debug/quiz", async (req, res) => {
 app.get("/api/ping", (_req, res) => res.json({ ok: true, timestamp: new Date().toISOString() }));
 
 // Catch all for unknown routes
-app.use((req, res) => {
-  res.status(404).json({ error: "Route not found" });
-});
-
-// Error handler
-app.use((err, req, res, next) => {
-  console.error("Server error:", err);
-  res.status(500).json({ error: "Internal server error" });
-});
-
 app.post("/api/reset-session", (req, res) => {
   // Clear the server-side session map
   clearSessions();
   console.log("[reset] Server-side sessions cleared");
   res.json({ ok: true, message: "Server sessions cleared" });
+});
+
+app.use((req, res) => {
+  res.status(404).json({ error: "Route not found" });
+});
+
+app.use((err, req, res, next) => {
+  console.error("Server error:", err);
+  res.status(500).json({ error: "Internal server error" });
 });
 
 const PORT = process.env.PORT || 8080;
