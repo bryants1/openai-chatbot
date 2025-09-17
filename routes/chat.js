@@ -91,6 +91,124 @@ async function saveSessionProgress(userId, sessionId, answers, scores, answeredI
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Course search intent detection
+ * ────────────────────────────────────────────────────────────────────────── */
+function detectCourseSearchIntent(text = "") {
+  const t = (text || "").toLowerCase();
+  
+  const courseKeywords = [
+    'course', 'courses', 'golf course', 'golfing', 'play golf', 'tee time',
+    'beginner', 'intermediate', 'advanced', 'difficulty', 'skill level',
+    'looking for', 'find', 'recommend', 'suggest', 'best course'
+  ];
+
+  const locationKeywords = [
+    'near', 'around', 'in', 'close to', 'within', 'area', 'location'
+  ];
+
+  const timeKeywords = [
+    'today', 'tomorrow', 'weekend', 'this week', 'next week', 'morning', 'afternoon', 'evening'
+  ];
+
+  // Check if text contains course-related keywords
+  const hasCourseIntent = courseKeywords.some(keyword => t.includes(keyword));
+  const hasLocationIntent = locationKeywords.some(keyword => t.includes(keyword));
+  const hasTimeIntent = timeKeywords.some(keyword => t.includes(keyword));
+
+  // Extract location and date info
+  const location = extractLocation(text);
+  const dateInfo = extractDateInfo(text);
+
+  return {
+    isCourseSearch: hasCourseIntent,
+    hasLocation: hasLocationIntent || location.length > 0,
+    hasTime: hasTimeIntent || dateInfo !== null,
+    location: location,
+    dateInfo: dateInfo,
+    confidence: (hasCourseIntent ? 1 : 0) + (hasLocationIntent ? 0.5 : 0) + (hasTimeIntent ? 0.3 : 0)
+  };
+}
+
+function extractLocation(text = "") {
+  const t = (text || "").trim();
+  let m = t.match(/\b(?:in|near|around|close to)\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
+  if (m) return m[1].replace(/[.,]+$/,'').trim();
+  m = t.match(/\bcourses?\s+in\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
+  if (m) return m[1].replace(/[.,]+$/,'').trim();
+  const words = t.replace(/[^A-Za-z\s-]/g, " ").trim().split(/\s+/);
+  if (words.length > 0 && words.length <= 3) return words.join(" ");
+  const tail = t.match(/([A-Za-z][A-Za-z\s-]{1,40})$/);
+  return tail ? tail[1].trim() : "";
+}
+
+function extractDateInfo(text = "") {
+  const t = (text || "").toLowerCase();
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  // Check for specific time references
+  if (/\b(?:today|this morning|this afternoon|this evening)\b/.test(t)) {
+    return { type: 'today', date: today.toISOString().split('T')[0] };
+  }
+  if (/\b(?:tomorrow|next day)\b/.test(t)) {
+    return { type: 'tomorrow', date: tomorrow.toISOString().split('T')[0] };
+  }
+  if (/\b(?:this weekend|weekend|saturday|sunday)\b/.test(t)) {
+    // Find next Saturday
+    const nextSaturday = new Date(today);
+    const daysUntilSaturday = (6 - today.getDay()) % 7;
+    nextSaturday.setDate(today.getDate() + (daysUntilSaturday === 0 ? 7 : daysUntilSaturday));
+    return { type: 'weekend', date: nextSaturday.toISOString().split('T')[0] };
+  }
+  if (/\b(?:next week|this week)\b/.test(t)) {
+    return { type: 'next_week', date: null };
+  }
+
+  return null;
+}
+
+function renderQuizSuggestionHTML(intent) {
+  const { location, dateInfo } = intent;
+  let suggestionText = "The best way for me to match you with a course is to ask you a few questions. ";
+  if (location) {
+    suggestionText += `I see you're looking around ${location}. `;
+  }
+  if (dateInfo) {
+    const timeText = {
+      'today': 'today',
+      'tomorrow': 'tomorrow',
+      'weekend': 'this weekend',
+      'next_week': 'next week'
+    }[dateInfo.type] || 'soon';
+    suggestionText += `I also noticed you want to play ${timeText}. `;
+  }
+  suggestionText += "Is that okay?";
+  return `
+    <div style="margin:8px 0">
+      <div style="margin-bottom:6px">🎯 Smart Match</div>
+      <div style="margin:8px 0; line-height:1.4; font-size:13px; color:#2c3e50;">
+        ${suggestionText}
+      </div>
+      <div style="display:flex; gap:8px; margin-top:6px">
+        <button onclick="(function(){
+          var box=document.getElementById('box');
+          if(box){ box.value='yes'; document.getElementById('btn').click(); }
+        })()">
+          Yes, start quiz
+        </button>
+        <button onclick="(function(){
+          var box=document.getElementById('box');
+          if(box){ box.value='no'; document.getElementById('btn').click(); }
+        })()" style="background:#6c757d; border-color:#6c757d; color:white;">
+          No, just search
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Session helpers
  * ────────────────────────────────────────────────────────────────────────── */
 const SESS = new Map();
@@ -300,6 +418,18 @@ router.post("/chat", async (req, res) => {
     }
 
     const isStart = /^\s*(start|start quiz)\s*$/i.test(lastUser);
+
+    // Check for course search intent and suggest quiz
+    if (!isStart && !state.mode) {
+      const courseIntent = detectCourseSearchIntent(lastUser);
+      if (courseIntent.isCourseSearch) {
+        // Show quiz suggestion with detected location/date
+        const suggestionHTML = renderQuizSuggestionHTML(courseIntent);
+        state.pendingQuizSuggestion = courseIntent;
+        SESS.set(sid, state);
+        return res.json({ html: suggestionHTML });
+      }
+    }
 
     // Handle quiz start FIRST, before RAG - using direct engine call
     if (isStart) {
