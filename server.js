@@ -244,7 +244,9 @@ app.get("/", (_req, res) => {
     if (profileData.location) {
       const locationEl = document.getElementById('location-info');
       if (locationEl) {
-        locationEl.textContent = profileData.location.city || profileData.location.zipCode || 'Set';
+        const city = profileData.location.city || profileData.location.zipCode || 'Set';
+        const radius = profileData.location.radius || 10;
+        locationEl.textContent = city + ' (' + radius + ' miles)';
       }
     }
     if (profileData.availability) {
@@ -263,7 +265,24 @@ app.get("/", (_req, res) => {
       const scoresEl = document.getElementById('scores-info');
       if (scoresEl) {
         const scoreCount = Object.keys(profileData.scores).length;
-        scoresEl.textContent = scoreCount > 0 ? scoreCount + ' questions answered' : 'None yet';
+        if (scoreCount > 0) {
+          // Format the scores as a compact display
+          const scoreEntries = Object.entries(profileData.scores)
+            .filter(([key, value]) => typeof value === 'number' && isFinite(value))
+            .map(([key, value]) => key + ': ' + value.toFixed(1))
+            .slice(0, 3); // Show first 3 scores
+          
+          if (scoreEntries.length > 0) {
+            scoresEl.textContent = scoreEntries.join(', ');
+            if (Object.keys(profileData.scores).length > 3) {
+              scoresEl.textContent += '...';
+            }
+          } else {
+            scoresEl.textContent = scoreCount + ' questions answered';
+          }
+        } else {
+          scoresEl.textContent = 'None yet';
+        }
       }
     }
   }
