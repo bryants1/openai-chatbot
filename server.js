@@ -101,17 +101,17 @@ app.get("/", (_req, res) => {
 <style>
   :root{--bg:#fafafa;--fg:#222;--muted:#777;--card:#fff;--border:#e5e5e5;--accent:#0a7}
   *{box-sizing:border-box}
-  body{margin:0;font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
+  body{margin:0;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
   .wrap{max-width:1100px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:2fr 1fr;gap:24px}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,0.1)}
   .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-  h1{margin:0}
-  .reset-btn{padding:6px 12px;border:1px solid #dc3545;background:#fff;color:#dc3545;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500}
+  h1{margin:0;font-size:18px;font-weight:700;color:var(--fg);background:linear-gradient(135deg, var(--accent), var(--accent-hover));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+  .reset-btn{padding:8px 16px;border:1px solid #dc3545;background:#fff;color:#dc3545;border-radius:4px;cursor:pointer;font-size:14px;font-weight:600;transition:all 0.2s ease}
   .reset-btn:hover{background:#dc3545;color:white}
-  .muted{color:var(--muted)}
+  .muted{color:var(--muted);font-size:14px}
   .row{display:flex;gap:8px;margin-top:10px}
   textarea{width:100%;min-height:60px;padding:12px;border:1px solid var(--border);border-radius:10px;resize:vertical}
-  button{padding:10px 14px;border-radius:10px;border:1px solid var(--accent);background:#fff;color:var(--accent);cursor:pointer}
+  button{padding:10px 16px;border-radius:10px;border:1px solid var(--accent);background:#fff;color:var(--accent);cursor:pointer;font-weight:600;transition:all 0.2s ease;min-width:80px}
   button:hover{background:#f2fffb}
   .msg{padding:10px 12px;border-radius:10px;margin:8px 0;white-space:pre-wrap}
   .me{background:#e9f7ff}
