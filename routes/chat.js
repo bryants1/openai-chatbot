@@ -257,17 +257,6 @@ function isListIntent(q) {
   const s = q.toLowerCase();
   return /(best|top|list|recommend|recommendation|near|close to|within|under\s*\$?\d+|courses?\s+(in|near|around)|bucket\s*list)/i.test(s);
 }
-function extractLocation(text = "") {
-  const t = (text || "").trim();
-  let m = t.match(/\b(?:in|near|around|close to)\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
-  if (m) return m[1].replace(/[.,]+$/,'').trim();
-  m = t.match(/\bcourses?\s+in\s+([A-Za-z][A-Za-z\s\.,-]{1,60})/i);
-  if (m) return m[1].replace(/[.,]+$/,'').trim();
-  const words = t.replace(/[^A-Za-z\s-]/g, " ").trim().split(/\s+/);
-  if (words.length > 0 && words.length <= 3) return words.join(" ");
-  const tail = t.match(/([A-Za-z][A-Za-z\s-]{1,40})$/);
-  return tail ? tail[1].trim() : "";
-}
 
 function renderReplyHTML(text=""){
   const md=(s)=>s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,(m,l,u)=>`<a href="${u.replace(/"/g,"%22")}" target="_blank" rel="noreferrer">${l}</a>`);

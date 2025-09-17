@@ -236,7 +236,7 @@ app.get("/", (_req, res) => {
       const scoresEl = document.getElementById('scores-info');
       if (scoresEl) {
         const scoreCount = Object.keys(profileData.scores).length;
-        scoresEl.textContent = scoreCount > 0 ? `${scoreCount} questions answered` : 'None yet';
+        scoresEl.textContent = scoreCount > 0 ? scoreCount + ' questions answered' : 'None yet';
       }
     }
   }
