@@ -1,6 +1,7 @@
 // src/ml/MLService.js — ultra-slim: question engine + scores + course matching only
 
 import { createClient } from "@supabase/supabase-js";
+import { QdrantClient } from "@qdrant/js-client-rest";
 
 // Optional Supabase (unused by core logic; safe to keep for future)
 function makeSupabase() {
@@ -17,6 +18,24 @@ function makeSupabase() {
   try { return createClient(url, key); } catch { return null; }
 }
 const supabase = makeSupabase();
+
+// Direct Qdrant client for course matching
+function makeQdrantClient() {
+  const url = process.env.COURSE_QDRANT_URL;
+  const apiKey = process.env.COURSE_QDRANT_API_KEY || "";
+  
+  if (!url) {
+    console.warn("[MLService] COURSE_QDRANT_URL not configured");
+    return null;
+  }
+  
+  try {
+    return new QdrantClient({ url, apiKey });
+  } catch (error) {
+    console.warn("[MLService] Failed to create Qdrant client:", error.message);
+    return null;
+  }
+}
 
 // Canonical 10D keys
 export const DIMS10 = [
@@ -140,29 +159,47 @@ export default class MLService {
   }
 
   /**
-   * Course matching via your qdrant-search endpoint.
-   * Accepts 10D dict; sends normalized 10D vector to service.
+   * Course matching via direct Qdrant access.
+   * Accepts 10D dict; searches Qdrant directly.
    */
   async getCourseMatchesBy5D(scores = {}, options = {}) {
     try {
-      const vec10 = scoresTo10DVector(norm10(scores));
-      const body = {
-        vector: vec10,
-        limit: options.topK || 8,
-      };
-      if (options?.location?.coords) {
-        body.lat = options.location.coords.lat;
-        body.lon = options.location.coords.lon;
-        if (options.location.radius) body.radius = options.location.radius * 1609.34;
+      const qdrant = makeQdrantClient();
+      
+      if (!qdrant) {
+        console.warn("[MLService] Qdrant client not available");
+        return [];
       }
-      const r = await fetch("https://golf-profiler-ml.vercel.app/api/qdrant-search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) return [];
-      const data = await r.json();
-      return (data.result || []).map((x) => ({
+
+      const vec10 = scoresTo10DVector(norm10(scores));
+      const collection = process.env.COURSE_QDRANT_COLLECTION || "10d_golf_courses";
+      
+      let searchParams = {
+        vector: vec10,
+        limit: Math.min(options.topK || 8, 100),
+        with_payload: true,
+        with_vectors: false
+      };
+
+      // Add geo filtering if coordinates provided
+      if (options?.location?.coords) {
+        const geoRadius = options.location.radius ? options.location.radius * 1609.34 : 50000; // default 50km in meters
+        searchParams.filter = {
+          must: [{
+            key: "payload.location",
+            geo_radius: {
+              center: { lat: Number(options.location.coords.lat), lon: Number(options.location.coords.lon) },
+              radius: geoRadius
+            }
+          }]
+        };
+      }
+
+      console.log(`[MLService] Searching collection: ${collection}`);
+      console.log(`[MLService] Search params:`, JSON.stringify(searchParams, null, 2));
+      
+      const results = await qdrant.search(collection, searchParams);
+      const matches = (results || []).map((x) => ({
         course_id: x.payload?.course_id,
         name:      x.payload?.course_name || x.payload?.name || "Course",
         url:       x.payload?.course_url  || x.payload?.website || null,
@@ -170,7 +207,12 @@ export default class MLService {
         distance:  x.distance,
         payload:   x.payload,
       }));
-    } catch {
+      
+      console.log(`[MLService] Found ${matches.length} course matches from ${collection}`);
+      return matches;
+    } catch (error) {
+      console.warn("[MLService] Course search error:", error.message);
+      console.warn("[MLService] Error details:", error);
       return [];
     }
   }

@@ -90,30 +90,6 @@ app.set("trust proxy", 1);
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
-// --- PID file management -------------------------------------------------
-const PID_PATH = path.join(__dirname, "server.pid");
-
-function writePidFile() {
-  try {
-    fs.writeFileSync(PID_PATH, String(process.pid));
-    console.log(`[server] Wrote PID ${process.pid} to ${PID_PATH}`);
-  } catch (e) {
-    console.warn(`[server] Could not write PID file at ${PID_PATH}:`, e.message);
-  }
-}
-
-function removePidFile() {
-  try {
-    if (!fs.existsSync(PID_PATH)) return;
-    const content = fs.readFileSync(PID_PATH, "utf8").trim();
-    if (content === String(process.pid)) {
-      fs.unlinkSync(PID_PATH);
-      console.log(`[server] Removed PID file ${PID_PATH}`);
-    }
-  } catch (e) {
-    console.warn(`[server] Could not remove PID file ${PID_PATH}:`, e.message);
-  }
-}
 
 // Main chat interface
 app.get("/", (_req, res) => {
@@ -704,7 +680,7 @@ app.get("/api/debug/courses", async (req, res) => {
   }
   
   try {
-    const collection = process.env.COURSE_COLLECTION || "courses";
+    const collection = process.env.COURSE_COLLECTION || "10d_golf_courses";
     
     // Get all courses and extract unique state values
     const results = await courseQdrant.scroll(collection, {
@@ -756,7 +732,7 @@ app.get("/api/debug/qdrant", async (req, res) => {
 
   try {
     if (courseQdrant) {
-      const courseInfo = await courseQdrant.getCollection(process.env.COURSE_COLLECTION || "courses");
+      const courseInfo = await courseQdrant.getCollection(process.env.COURSE_QDRANT_COLLECTION || "10d_golf_courses");
       results.courses = { status: "connected", info: courseInfo };
     } else {
       results.courses = { status: "disabled", error: "COURSE_QDRANT_URL not configured" };
@@ -830,7 +806,7 @@ async function embedQuery(q) {
     // 1) Try course Qdrant by exact website/course_url match
     if (courseQdrant) {
       try {
-        const collection = process.env.COURSE_COLLECTION || "courses";
+        const collection = process.env.COURSE_QDRANT_COLLECTION || "10d_golf_courses";
         const filters = {
           must: [
             { key: "payload.course_url", match: { value: url } },
@@ -961,6 +937,7 @@ async function embedQuery(q) {
   }
 });
 
+
 app.get("/api/debug/quiz", async (req, res) => {
   try {
     console.log("Testing quiz engine import...");
@@ -1013,7 +990,6 @@ function startListening(port, attempt = 0) {
     console.log(`[server] Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`[server] Visit http://localhost:${port} to test`);
     currentServer = server;
-    writePidFile();
   });
 
   server.on('error', (err) => {
@@ -1031,9 +1007,8 @@ function startListening(port, attempt = 0) {
 
 startListening(BASE_PORT);
 
-// Graceful shutdown and PID cleanup
+// Graceful shutdown
 function shutdown(code = 0) {
-  try { removePidFile(); } catch {}
   if (currentServer) {
     try {
       currentServer.close(() => process.exit(code));
@@ -1045,6 +1020,6 @@ function shutdown(code = 0) {
 
 process.on('SIGINT', () => { console.log('[server] SIGINT'); shutdown(0); });
 process.on('SIGTERM', () => { console.log('[server] SIGTERM'); shutdown(0); });
-process.on('exit', () => { try { removePidFile(); } catch {} });
+process.on('exit', () => {});
 process.on('uncaughtException', (err) => { console.error('[server] Uncaught', err); shutdown(1); });
 process.on('unhandledRejection', (err) => { console.error('[server] UnhandledRejection', err); shutdown(1); });

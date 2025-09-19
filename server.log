@@ -4,31 +4,419 @@
 [debug] QDRANT_COLLECTION = site_docs
 [debug] SUPABASE_URL = loaded
 [debug] SUPABASE_SERVICE_ROLE_KEY = loaded
-[env] OPENAI_API_KEY = sk-p…****
+[env] OPENAI_API_KEY = sk-p…sVcA (len=164)
+[openai] OpenAI client initialized with key prefix: sk-pro…
 [qdrant] Site client: initialized
 [qdrant] Course client: initialized
 [supabase] Client initialized
-node:events:485
-      throw er; // Unhandled 'error' event
-      ^
-
-Error: listen EADDRINUSE: address already in use :::8080
-    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
-    at listenInCluster (node:net:1997:12)
-    at Server.listen (node:net:2102:7)
-    at app.listen (/Users/bryantshea/NodeProjects/openai-chatbot/node_modules/express/lib/application.js:635:24)
-    at file:///Users/bryantshea/NodeProjects/openai-chatbot/server.js:651:5
-    at ModuleJob.run (node:internal/modules/esm/module_job:365:25)
-    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:665:26)
-    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:99:5)
-Emitted 'error' event on Server instance at:
-    at emitErrorNT (node:net:1976:8)
-    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
-  code: 'EADDRINUSE',
-  errno: -48,
-  syscall: 'listen',
-  address: '::',
-  port: 8080
+[server] Listening on port 8080
+[server] Environment: development
+[server] Visit http://localhost:8080 to test
+[reset] Chat sessions cleared
+[reset] Server-side sessions cleared
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: false,
+  currentSessionId: null,
+  sessionMapSize: 0
 }
-
-Node.js v24.3.0
+Starting session: { user_id: 'xpjj6qz12g', session_id: '1758238224305' }
+Session started successfully: { user_id: 'xpjj6qz12g', session_id: '1758238224305' }
+Session started successfully: { userId: 'xpjj6qz12g', sessionId: '1758238224305' }
+[engine] Supabase client created successfully
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q1_OVERALL_DIFFICULTY_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q1_OVERALL_DIFFICULTY_1',
+  sequence_length: 2
+}
+Session progress saved successfully: {
+  userId: 'xpjj6qz12g',
+  sessionId: '1758238224305',
+  answeredId: 'Q1_OVERALL_DIFFICULTY_1'
+}
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q2_STRATEGY_VARIETY_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q2_STRATEGY_VARIETY_1',
+  sequence_length: 3
+}
+Session progress saved successfully: {
+  userId: 'xpjj6qz12g',
+  sessionId: '1758238224305',
+  answeredId: 'Q2_STRATEGY_VARIETY_1'
+}
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q3_PENAL_PLAYABLE_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q3_PENAL_PLAYABLE_1',
+  sequence_length: 4
+}
+Session progress saved successfully: {
+  userId: 'xpjj6qz12g',
+  sessionId: '1758238224305',
+  answeredId: 'Q3_PENAL_PLAYABLE_1'
+}
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q4_PHYSICAL_DEMANDS_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q4_PHYSICAL_DEMANDS_1',
+  sequence_length: 5
+}
+Session progress saved successfully: {
+  userId: 'xpjj6qz12g',
+  sessionId: '1758238224305',
+  answeredId: 'Q4_PHYSICAL_DEMANDS_1'
+}
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q5_WEATHER_ADAPT_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q5_WEATHER_ADAPT_1',
+  sequence_length: 6
+}
+Session progress saved successfully: {
+  userId: 'xpjj6qz12g',
+  sessionId: '1758238224305',
+  answeredId: 'Q5_WEATHER_ADAPT_1'
+}
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q6_CONDITIONS_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q6_CONDITIONS_1',
+  sequence_length: 7
+}
+Session progress saved successfully: {
+  userId: 'xpjj6qz12g',
+  sessionId: '1758238224305',
+  answeredId: 'Q6_CONDITIONS_1'
+}
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q7_AMENITIES_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q7_AMENITIES_1',
+  sequence_length: 8
+}
+Session progress saved successfully: {
+  userId: 'xpjj6qz12g',
+  sessionId: '1758238224305',
+  answeredId: 'Q7_AMENITIES_1'
+}
+Session debug: {
+  sid: 'qw3g1xe2p2',
+  uid: 'xpjj6qz12g',
+  hasState: true,
+  currentSessionId: '1758238224305',
+  sessionMapSize: 1
+}
+[engine] Getting course matches for scores: {
+  overall_difficulty: 2,
+  strategic_variety: 5,
+  penal_vs_playable: 8,
+  physical_demands: 2,
+  weather_adaptability: 5,
+  conditions_quality: 3,
+  facilities_amenities: 9,
+  service_operations: 3,
+  value_proposition: 0,
+  aesthetic_appeal: 0
+}
+[MLService] Searching collection: 10d_golf_courses
+[MLService] Search params: {
+  "vector": [
+    0.2,
+    0.5,
+    0.8,
+    0.2,
+    0.5,
+    0.3,
+    0.9,
+    0.3,
+    0,
+    0
+  ],
+  "limit": 8,
+  "with_payload": true,
+  "with_vectors": false,
+  "filter": {
+    "must": [
+      {
+        "key": "payload.location",
+        "geo_radius": {
+          "center": {
+            "lat": 42.3837,
+            "lon": -71.4282
+          },
+          "radius": 40233.5
+        }
+      }
+    ]
+  }
+}
+[MLService] Course search error: Bad Request
+[MLService] Error details: ApiError: Bad Request
+    at Object.fun [as searchPoints] (file:///Users/bryantshea/NodeProjects/openai-chatbot/node_modules/@qdrant/openapi-typescript-fetch/dist/esm/fetcher.js:169:23)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async QdrantClient.search (file:///Users/bryantshea/NodeProjects/openai-chatbot/node_modules/@qdrant/js-client-rest/dist/esm/qdrant-client.js:166:26)
+    at async MLService.getCourseMatchesBy5D (file:///Users/bryantshea/NodeProjects/openai-chatbot/quiz/ml/MLService.js:201:23)
+    at async buildProfileWithMatches (file:///Users/bryantshea/NodeProjects/openai-chatbot/quiz/engine.js:496:23)
+    at async submitAnswer (file:///Users/bryantshea/NodeProjects/openai-chatbot/quiz/engine.js:390:21)
+    at async file:///Users/bryantshea/NodeProjects/openai-chatbot/routes/chat.js:1472:24 {
+  headers: Headers {
+    'content-encoding': 'br',
+    'content-type': 'application/json',
+    date: 'Thu, 18 Sep 2025 23:32:02 GMT',
+    vary: 'accept-encoding, Origin, Access-Control-Request-Method, Access-Control-Request-Headers',
+    'transfer-encoding': 'chunked'
+  },
+  url: 'https://c6839cdd-9c8e-45e0-ac73-ba9b48068694.us-east-1-1.aws.cloud.qdrant.io:6333/collections/10d_golf_courses/points/search',
+  status: 400,
+  statusText: 'Bad Request',
+  data: {
+    status: {
+      error: 'Bad request: Index required but not found for "payload.location" of one of the following types: [geo]. Help: Create an index for this key or use a different filter.'
+    },
+    time: 0.000001534
+  }
+}
+[engine] Received 0 course matches
+[engine] No course matches found
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q8_OPERATIONS_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238224305',
+  answered_id: 'Q8_OPERATIONS_1',
+  sequence_length: 9
+}
+Session progress saved successfully: {
+  userId: 'xpjj6qz12g',
+  sessionId: '1758238224305',
+  answeredId: 'Q8_OPERATIONS_1'
+}
+Starting session: { user_id: 'xpjj6qz12g', session_id: '1758238486369' }
+Supabase error: {
+  message: 'TypeError: fetch failed',
+  details: 'TypeError: fetch failed\n' +
+    '    at node:internal/deps/undici/undici:15482:13\n' +
+    '    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n' +
+    '    at async file:///Users/bryantshea/NodeProjects/openai-chatbot/server.js:526:29',
+  hint: '',
+  code: ''
+}
+Failed to start session: {
+  message: 'TypeError: fetch failed',
+  details: 'TypeError: fetch failed\n' +
+    '    at node:internal/deps/undici/undici:15482:13\n' +
+    '    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n' +
+    '    at async file:///Users/bryantshea/NodeProjects/openai-chatbot/server.js:526:29',
+  hint: '',
+  code: ''
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q1_OVERALL_DIFFICULTY_1'
+}
+Error fetching current session: {
+  code: 'PGRST116',
+  details: 'The result contains 0 rows',
+  hint: null,
+  message: 'Cannot coerce the result to a single JSON object'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q1_OVERALL_DIFFICULTY_1',
+  sequence_length: 1
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q1_OVERALL_DIFFICULTY_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q1_OVERALL_DIFFICULTY_1',
+  sequence_length: 2
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q2_STRATEGY_VARIETY_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q2_STRATEGY_VARIETY_1',
+  sequence_length: 3
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q3_PENAL_PLAYABLE_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q3_PENAL_PLAYABLE_1',
+  sequence_length: 4
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q4_PHYSICAL_DEMANDS_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q4_PHYSICAL_DEMANDS_1',
+  sequence_length: 5
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q5_WEATHER_ADAPT_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q5_WEATHER_ADAPT_1',
+  sequence_length: 6
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q6_CONDITIONS_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q6_CONDITIONS_1',
+  sequence_length: 7
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q7_AMENITIES_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q7_AMENITIES_1',
+  sequence_length: 8
+}
+Saving session progress: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q8_OPERATIONS_1'
+}
+Session progress saved successfully: {
+  user_id: 'xpjj6qz12g',
+  session_id: '1758238486369',
+  answered_id: 'Q8_OPERATIONS_1',
+  sequence_length: 9
+}
+[server] SIGTERM

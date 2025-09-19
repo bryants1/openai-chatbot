@@ -293,10 +293,11 @@ async function patchProfile({ userId, scores }) {
    Finish predicate
    ========================================================================= */
 function shouldFinish(scores = {}, count = 0) {
-  // simple coverage + cap
-  const covered = DIMS10.some(k => (scores?.[k] ?? 0) > 0);
+  // More comprehensive coverage check - need at least 6 dimensions covered
+  const coveredDims = DIMS10.filter(k => (scores?.[k] ?? 0) > 0).length;
   if (count >= 10) return true;
-  if (count >= 5 && covered) return true;
+  if (count >= 8 && coveredDims >= 6) return true;
+  if (count >= 6 && coveredDims >= 8) return true;
   return false;
 }
 
@@ -491,7 +492,9 @@ async function buildProfileWithMatches(answers, scores, sessionId, ml, location)
   // attach matches if available
   try {
     if (ml && typeof ml.getCourseMatchesBy5D === "function") {
+      console.log("[engine] Getting course matches for scores:", scores);
       const matches = await ml.getCourseMatchesBy5D(scores, { topK: 8, location });
+      console.log(`[engine] Received ${matches?.length || 0} course matches`);
       if (Array.isArray(matches) && matches.length) {
         profile.matchedCourses = matches.map(m => ({
           name: m.name || m.payload?.course_name || "Course",
@@ -499,7 +502,12 @@ async function buildProfileWithMatches(answers, scores, sessionId, ml, location)
           score: m.score,
           distance: m.distance
         }));
+        console.log(`[engine] Added ${profile.matchedCourses.length} courses to profile`);
+      } else {
+        console.warn("[engine] No course matches found");
       }
+    } else {
+      console.warn("[engine] ML service not available for course matching");
     }
   } catch (e) {
     console.warn("[engine] attach matches failed:", e?.message || e);

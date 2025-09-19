@@ -2,6 +2,7 @@
 // Search for courses using your 10D user vector, optionally geo-filtered.
 
 import { scoresTo10DArray } from "./userVector.js"; // <- uses your 10D DIM_ORDER
+import { QdrantClient } from "@qdrant/js-client-rest";
 
 /**
  * @typedef {Object} Location
@@ -60,17 +61,17 @@ function normalizeResults(apiResult) {
 }
 
 /**
- * Resolve the endpoint to call:
- * - Prefer explicit options.endpoint
- * - Then env QDRANT_SEARCH_URL (your serverless aggregator)
- * - Finally fallback to your Vercel function used earlier
+ * Get Qdrant client directly
  */
-function resolveEndpoint(overrideEndpoint) {
-  if (overrideEndpoint) return overrideEndpoint.trim();
-  if (process.env.QDRANT_SEARCH_URL) return process.env.QDRANT_SEARCH_URL.trim();
-
-  // Fallback to your existing deployed function that proxies Qdrant
-  return "https://golf-profiler-ml.vercel.app/api/qdrant-search";
+function getQdrantClient() {
+  const url = process.env.COURSE_QDRANT_URL;
+  const apiKey = process.env.COURSE_QDRANT_API_KEY || "";
+  
+  if (!url) {
+    throw new Error("COURSE_QDRANT_URL not configured");
+  }
+  
+  return new QdrantClient({ url, apiKey });
 }
 
 /**
@@ -80,23 +81,33 @@ function resolveEndpoint(overrideEndpoint) {
  * @returns {Promise<Array<{course_id?:string, name:string, url:string|null, score:number, distance?:number, payload?:any}>>}
  */
 export async function searchCourses(scores, options = {}) {
-  const endpoint = resolveEndpoint(options.endpoint);
+  const qdrant = getQdrantClient();
   const body = buildRequestBody(scores, options);
+  const collection = process.env.COURSE_QDRANT_COLLECTION || "10d_golf_courses";
+  
+  let searchParams = {
+    vector: body.vector,
+    limit: body.limit,
+    with_payload: true,
+    with_vectors: false
+  };
 
-  const r = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!r.ok) {
-    // Surface a concise error with a short body preview
-    const txt = await r.text().catch(() => "");
-    throw new Error(`qdrant-search failed: HTTP ${r.status} – ${txt.slice(0, 200)}`);
+  // Add geo filtering if coordinates provided
+  if (body.lat !== undefined && body.lon !== undefined) {
+    const geoRadius = body.radius || 50000; // default 50km in meters
+    searchParams.filter = {
+      must: [{
+        key: "payload.location",
+        geo_radius: {
+          center: { lat: Number(body.lat), lon: Number(body.lon) },
+          radius: geoRadius
+        }
+      }]
+    };
   }
 
-  const data = await r.json().catch(() => ({}));
-  return normalizeResults(data);
+  const results = await qdrant.search(collection, searchParams);
+  return normalizeResults({ result: results || [] });
 }
 
 /**

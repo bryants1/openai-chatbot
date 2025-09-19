@@ -570,7 +570,7 @@ async function retrieveCourses(question, topK=20){
   try {
     // Extract location from question for filtering
     const location = extractLocation(question);
-    const collection = process.env.COURSE_COLLECTION || "courses";
+    const collection = process.env.COURSE_QDRANT_COLLECTION || "10d_golf_courses";
     
     // Try to find courses by state
     let stateToSearch = null;
@@ -727,23 +727,21 @@ router.post("/chat", async (req, res) => {
           });
         }
         
-        // If we have both location and date, show quiz suggestion instead of starting immediately
+        // If we have a question, start the quiz immediately
         if (startAns.question) {
-          // Don't start the quiz yet - show suggestion first
-          // Create a mock intent object for the suggestion
-          const mockIntent = {
-            location: state.location?.city || state.location?.display_name,
-            dateInfo: state.availability?.original || state.availability?.date
-          };
-          state.pendingQuizSuggestion = mockIntent;
-          const suggestionHTML = renderQuizSuggestionHTML(mockIntent, state);
+          state.mode = "quiz";
+          state.sessionId = startAns.sessionId;
+          state.question = startAns.question;
+          state.questionNumber = startAns.questionNumber;
+          state.needsLocation = false;
+          state.pendingQuizSuggestion = null;
           SESS.set(sid, state);
-          return res.json({ 
-            html: suggestionHTML,
+          return res.json({
+            html: startAns.question,
             profile: {
               location: state.location,
               availability: state.availability,
-              quizProgress: "Quiz suggested",
+              quizProgress: `Quiz in progress - Question ${startAns.questionNumber || 1}`,
               scores: state.scores
             }
           });
