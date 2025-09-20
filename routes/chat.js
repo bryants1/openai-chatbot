@@ -512,12 +512,12 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   // Add golfer profile spider diagram
   const haveAny = dims.some(k => typeof scores?.[k] === "number" && isFinite(scores[k]));
   if (haveAny) {
-    // Convert scores from 0-10 scale to 0-100 for spider diagram
+    // Use scores directly for spider diagram (already in -10 to +10 range for bipolar scoring)
     const golferScores = {};
     for (const k of dims) {
       const v = scores?.[k];
       if (typeof v === "number" && isFinite(v)) {
-        golferScores[k] = v * 10; // Convert from 0-10 to 0-100 scale
+        golferScores[k] = v; // Keep bipolar scores as-is (-10 to +10)
       } else {
         golferScores[k] = 0;
       }
@@ -721,7 +721,15 @@ function generateSpiderDiagram(scores, courseName, overlayScores = null, overlay
   const dataPoints = dimensions.map((dim, i) => {
     const angle = (i * 2 * Math.PI) / numDimensions - Math.PI / 2;
     const value = scores[dim.key] || 0;
-    const normalizedValue = Math.min(value / 100, 1); // Normalize to 0-1
+    // Handle both bipolar scores (-10 to +10) and course scores (0-100)
+    let normalizedValue;
+    if (Math.abs(value) <= 10) {
+      // Bipolar scores (-10 to +10) - map to 0-1 range
+      normalizedValue = Math.max(0, Math.min(1, (value + 10) / 20));
+    } else {
+      // Course scores (0-100) - normalize to 0-1 range
+      normalizedValue = Math.min(value / 100, 1);
+    }
     const x = centerX + radius * normalizedValue * Math.cos(angle);
     const y = centerY + radius * normalizedValue * Math.sin(angle);
     return { x, y, value: Math.round(value) };
@@ -746,7 +754,15 @@ function generateSpiderDiagram(scores, courseName, overlayScores = null, overlay
     const overlayDataPoints = dimensions.map((dim, i) => {
       const angle = (i * 2 * Math.PI) / numDimensions - Math.PI / 2;
       const value = overlayScores[dim.key] || 0;
-      const normalizedValue = Math.min(value / 100, 1);
+      // Handle both bipolar scores (-10 to +10) and course scores (0-100)
+      let normalizedValue;
+      if (Math.abs(value) <= 10) {
+        // Bipolar scores (-10 to +10) - map to 0-1 range
+        normalizedValue = Math.max(0, Math.min(1, (value + 10) / 20));
+      } else {
+        // Course scores (0-100) - normalize to 0-1 range
+        normalizedValue = Math.min(value / 100, 1);
+      }
       const x = centerX + radius * normalizedValue * Math.cos(angle);
       const y = centerY + radius * normalizedValue * Math.sin(angle);
       return { x, y, value: Math.round(value) };
