@@ -272,6 +272,7 @@
             };
 
             const handleEdit = (question) => {
+                console.log('Edit button clicked for question:', question);
                 setEditingQuestion(question);
                 setFormData({
                     id: question.id,
@@ -332,7 +333,7 @@
 
             if (loading) {
                 return (
-                    <div class="card">
+                    <div className="card">
                         <div style={{ textAlign: 'center', padding: '48px' }}>
                             <div style={{ fontSize: '32px', margin: '0 auto 12px', color: '#9ca3af' }}>⏳</div>
                             <p style={{ color: '#6b7280' }}>Loading questions...</p>
@@ -388,21 +389,21 @@
 
                     <div>
                         {questions.length === 0 ? (
-                            <div class="card" style={{ textAlign: 'center', padding: '48px' }}>
+                            <div className="card" style={{ textAlign: 'center', padding: '48px' }}>
                                 <div style={{ fontSize: '32px', margin: '0 auto 12px', color: '#9ca3af' }}>❓</div>
                                 <p style={{ color: '#6b7280' }}>No questions found</p>
                             </div>
                         ) : (
                             questions.map(question => (
-                                <div key={question.id} class="question-item">
-                                    <div class="question-header">
-                                        <div class="question-content">
-                                            <div class="question-tags">
-                                                <span class="tag tag-type">{question.type}</span>
-                                                <span class="tag tag-priority">Priority: {question.priority}</span>
+                                <div key={question.id} className="question-item">
+                                    <div className="question-header">
+                                        <div className="question-content">
+                                            <div className="question-tags">
+                                                <span className="tag tag-type">{question.type}</span>
+                                                <span className="tag tag-priority">Priority: {question.priority}</span>
                                             </div>
-                                            <h3 class="question-title">{question.question}</h3>
-                                            <div class="question-stats">
+                                            <h3 className="question-title">{question.question}</h3>
+                                            <div className="question-stats">
                                                 <span>Options: {question.options.length}</span>
                                                 <span>ID: {question.id}</span>
                                             </div>
@@ -417,16 +418,19 @@
                                                 </div>
                                             )}
                                         </div>
-                                        <div class="question-actions">
+                                        <div className="question-actions">
                                             <button 
-                                                class="action-button" 
+                                                className="action-button" 
                                                 title="Edit"
-                                                onClick={() => handleEdit(question)}
+                                                onClick={() => {
+                                                    console.log('Button clicked for question:', question.id);
+                                                    handleEdit(question);
+                                                }}
                                             >
                                                 ✏️
                                             </button>
                                             <button 
-                                                class="action-button delete" 
+                                                className="action-button delete" 
                                                 title="Delete"
                                                 onClick={() => handleDelete(question.id)}
                                             >
@@ -683,35 +687,35 @@
 
             if (loading) {
                 return (
-                    <div class="loading">
-                        <div class="loading-content">
-                            <div class="loading-icon">⏳</div>
-                            <p class="loading-text">Loading...</p>
+                    <div className="loading">
+                        <div className="loading-content">
+                            <div className="loading-icon">⏳</div>
+                            <p className="loading-text">Loading...</p>
                         </div>
                     </div>
                 );
             }
 
             return (
-                <div class="admin-container">
-                    <div class="header">
-                        <div class="header-content">
+                <div className="admin-container">
+                    <div className="header">
+                        <div className="header-content">
                             <h1>ML Admin Console</h1>
                             <p>Manage questions and view algorithm configurations</p>
                         </div>
                     </div>
 
-                    <div class="nav">
-                        <div class="nav-content">
-                            <nav class="nav-buttons">
+                    <div className="nav">
+                        <div className="nav-content">
+                            <nav className="nav-buttons">
                                 <button
-                                    class={`nav-button ${activeTab === 'questions' ? 'active' : ''}`}
+                                    className={`nav-button ${activeTab === 'questions' ? 'active' : ''}`}
                                     onClick={() => setActiveTab('questions')}
                                 >
                                     Questions
                                 </button>
                                 <button
-                                    class={`nav-button ${activeTab === 'algorithms' ? 'active' : ''}`}
+                                    className={`nav-button ${activeTab === 'algorithms' ? 'active' : ''}`}
                                     onClick={() => setActiveTab('algorithms')}
                                 >
                                     Algorithms
@@ -720,26 +724,26 @@
                         </div>
                     </div>
 
-                    <div class="main-content">
+                    <div className="main-content">
                         {activeTab === 'questions' && <QuestionManager />}
 
                         {activeTab === 'algorithms' && (
                             <div>
-                                <div class="stats-grid">
-                                    <div class="stat-card">
-                                        <p class="stat-label">Total Profiles</p>
-                                        <p class="stat-value">{stats.totalProfiles}</p>
+                                <div className="stats-grid">
+                                    <div className="stat-card">
+                                        <p className="stat-label">Total Profiles</p>
+                                        <p className="stat-value">{stats.totalProfiles}</p>
                                     </div>
-                                    <div class="stat-card">
-                                        <p class="stat-label">Active Algorithms</p>
-                                        <p class="stat-value">{stats.activeAlgorithms}</p>
+                                    <div className="stat-card">
+                                        <p className="stat-label">Active Algorithms</p>
+                                        <p className="stat-value">{stats.activeAlgorithms}</p>
                                     </div>
                                 </div>
 
                                 <h2 style={{ fontSize: '20px', fontWeight: '600', marginBottom: '16px' }}>Active Algorithms</h2>
                                 
                                 {stats.scoringConfig && (
-                                    <div class="card">
+                                    <div className="card">
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '20px' }}>
                                             <div>
                                                 <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#111827' }}>
@@ -794,7 +798,7 @@
                                 )}
 
                                 {stats.questionSelectionConfig && (
-                                    <div class="card">
+                                    <div className="card">
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '20px' }}>
                                             <div>
                                                 <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#111827' }}>
@@ -831,7 +835,7 @@
                                 )}
 
                                 {!stats.scoringConfig && !stats.questionSelectionConfig && (
-                                    <div class="card" style={{ textAlign: 'center', padding: '48px' }}>
+                                    <div className="card" style={{ textAlign: 'center', padding: '48px' }}>
                                         <div style={{ fontSize: '32px', margin: '0 auto 12px', color: '#9ca3af' }}>⚙️</div>
                                         <p style={{ color: '#6b7280' }}>No active algorithms configured</p>
                                     </div>

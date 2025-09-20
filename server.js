@@ -532,6 +532,11 @@ app.get("/admin-simple", (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-simple.html'));
 });
 
+// Admin debug route
+app.get("/admin-debug", (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-debug.html'));
+});
+
 // Admin API endpoints
 app.get("/api/admin/questions", async (req, res) => {
   try {

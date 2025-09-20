@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Debug</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f9fafb;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .question-item {
+            background-color: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .question-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+        }
+        .question-content {
+            flex: 1;
+        }
+        .question-title {
+            font-size: 16px;
+            font-weight: 500;
+            color: #111827;
+        }
+        .question-actions {
+            display: flex;
+            gap: 4px;
+        }
+        .action-button {
+            padding: 6px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: #6b7280;
+        }
+        .action-button:hover {
+            color: #3b82f6;
+        }
+        .edit-form {
+            background-color: #ffffff;
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div class="container">
+            <h1>Loading...</h1>
+        </div>
+    </div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const TestComponent = () => {
+            const [questions, setQuestions] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [editingQuestion, setEditingQuestion] = useState(null);
+
+            useEffect(() => {
+                fetchQuestions();
+            }, []);
+
+            const fetchQuestions = async () => {
+                try {
+                    setLoading(true);
+                    const response = await fetch('/api/admin/questions');
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        console.error('Error fetching questions:', data.error);
+                        setQuestions([]);
+                    } else {
+                        setQuestions(data.questions || []);
+                    }
+                } catch (error) {
+                    console.error('Error fetching questions:', error);
+                    setQuestions([]);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleEdit = (question) => {
+                console.log('Edit button clicked for question:', question);
+                setEditingQuestion(question);
+            };
+
+            if (loading) {
+                return (
+                    <div class="container">
+                        <h1>Loading questions...</h1>
+                    </div>
+                );
+            }
+
+            return (
+                <div class="container">
+                    <h1>Debug Admin - {questions.length} Questions</h1>
+                    
+                    {editingQuestion && (
+                        <div class="edit-form">
+                            <h3>Editing: {editingQuestion.id}</h3>
+                            <p>Question: {editingQuestion.question}</p>
+                            <button onClick={() => setEditingQuestion(null)}>Close</button>
+                        </div>
+                    )}
+
+                    {questions.slice(0, 3).map(question => (
+                        <div key={question.id} class="question-item">
+                            <div class="question-header">
+                                <div class="question-content">
+                                    <h3 class="question-title">{question.question}</h3>
+                                    <p>ID: {question.id} | Type: {question.type} | Priority: {question.priority}</p>
+                                </div>
+                                <div class="question-actions">
+                                    <button 
+                                        class="action-button" 
+                                        title="Edit"
+                                        onClick={() => {
+                                            console.log('Button clicked for question:', question.id);
+                                            handleEdit(question);
+                                        }}
+                                    >
+                                        ✏️ Edit
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            );
+        };
+
+        // Render the app
+        ReactDOM.render(<TestComponent />, document.getElementById('root'));
+    </script>
+</body>
+</html>
