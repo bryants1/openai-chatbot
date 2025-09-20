@@ -512,14 +512,20 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   // Add golfer profile spider diagram
   const haveAny = dims.some(k => typeof scores?.[k] === "number" && isFinite(scores[k]));
   if (haveAny) {
-    // Use scores directly for spider diagram (already in -10 to +10 range for bipolar scoring)
+    // Convert scores to -10 to +10 range for spider diagram
     const golferScores = {};
     console.log('[DEBUG] Raw golfer scores:', scores);
     for (const k of dims) {
       const v = scores?.[k];
       if (typeof v === "number" && isFinite(v)) {
-        golferScores[k] = v; // Keep bipolar scores as-is (-10 to +10)
-        console.log(`[DEBUG] Golfer score for ${k}: ${v}`);
+        // Convert to -10 to +10 range (assuming input is 0-100 or similar)
+        // If score is > 10, assume it's in 0-100 range and convert to -10 to +10
+        if (Math.abs(v) > 10) {
+          golferScores[k] = (v - 50) / 5; // Convert 0-100 to -10 to +10
+        } else {
+          golferScores[k] = v; // Already in -10 to +10 range
+        }
+        console.log(`[DEBUG] Golfer score for ${k}: ${v} -> ${golferScores[k]}`);
       } else {
         golferScores[k] = 0;
       }
