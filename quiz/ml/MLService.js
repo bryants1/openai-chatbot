@@ -181,20 +181,19 @@ export default class MLService {
         with_vectors: false
       };
 
-      // TODO: Fix geo filtering - need to create proper geo index or use different approach
-      // Temporarily disabled to get course matches working
-      // if (options?.location?.coords) {
-      //   const geoRadius = options.location.radius ? options.location.radius * 1609.34 : 50000; // default 50km in meters
-      //   searchParams.filter = {
-      //     must: [{
-      //       key: "payload.latitude",
-      //       geo_radius: {
-      //         center: { lat: Number(options.location.coords.lat), lon: Number(options.location.coords.lon) },
-      //         radius: geoRadius
-      //       }
-      //     }]
-      //   };
-      // }
+      // Add geo filtering if coordinates provided
+      if (options?.location?.coords) {
+        const geoRadius = options.location.radius ? options.location.radius * 1609.34 : 50000; // default 50km in meters
+        searchParams.filter = {
+          must: [{
+            key: "location",
+            geo_radius: {
+              center: { lat: Number(options.location.coords.lat), lon: Number(options.location.coords.lon) },
+              radius: geoRadius
+            }
+          }]
+        };
+      }
 
       console.log(`[MLService] Searching collection: ${collection}`);
       console.log(`[MLService] Search params:`, JSON.stringify(searchParams, null, 2));
