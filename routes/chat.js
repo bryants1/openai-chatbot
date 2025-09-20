@@ -1912,6 +1912,9 @@ ${courseNames.map(name => `- ${name}`).join('\n')}` : '';
         }
 
         if (apiAns.complete){
+          console.log('[DEBUG] Quiz completed! Profile:', apiAns.profile);
+          console.log('[DEBUG] Scores:', apiAns.scores ?? state.scores);
+          console.log('[DEBUG] Total questions:', apiAns.totalQuestions ?? 0);
           state.mode=null; state.question=null; SESS.set(sid,state);
           const html = renderFinalProfileHTML(apiAns.profile, apiAns.scores ?? state.scores, apiAns.totalQuestions ?? 0);
           return res.json({ html });
@@ -1996,6 +1999,9 @@ ${courseNames.map(name => `- ${name}`).join('\n')}` : '';
         }
 
         if (ftAns.complete){
+          console.log('[DEBUG] Quiz completed (fallback)! Profile:', ftAns.profile);
+          console.log('[DEBUG] Scores:', ftAns.scores ?? state.scores);
+          console.log('[DEBUG] Total questions:', ftAns.totalQuestions ?? 0);
           state.mode=null; state.question=null; SESS.set(sid,state);
           const html = renderFinalProfileHTML(ftAns.profile, ftAns.scores ?? state.scores, ftAns.totalQuestions ?? 0);
           return res.json({ html });
