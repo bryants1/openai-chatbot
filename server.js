@@ -156,7 +156,10 @@ app.get("/", (_req, res) => {
     <div class="card">
       <div class="header">
         <h1>Golf Course Assistant</h1>
-        <button class="reset-btn" onclick="resetSession()">Reset Session</button>
+        <div style="display: flex; gap: 8px;">
+          <a href="/admin" style="padding: 8px 16px; border: 1px solid #6c757d; background: #fff; color: #6c757d; border-radius: 4px; text-decoration: none; font-size: 14px; font-weight: 600; transition: all 0.2s ease;">Admin</a>
+          <button class="reset-btn" onclick="resetSession()">Reset Session</button>
+        </div>
       </div>
       <div class="muted">Type <code>start</code> to begin the quiz, or ask for courses.</div>
       <div id="log"></div>
@@ -512,6 +515,11 @@ app.get("/", (_req, res) => {
 </script>
 </body>
 </html>`);
+});
+
+// Admin page route
+app.get("/admin", (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 // Mount chat routes

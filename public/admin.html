@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ML Admin Console - Golf Course Chatbot</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            background-color: #f9fafb;
+        }
+        
+        * {
+            box-sizing: border-box;
+        }
+        
+        .loading {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #f9fafb;
+        }
+        
+        .loading-content {
+            text-align: center;
+        }
+        
+        .loading-icon {
+            margin: 0 auto 16px;
+            color: #9ca3af;
+        }
+        
+        .loading-text {
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div class="loading">
+            <div class="loading-content">
+                <div class="loading-icon">⏳</div>
+                <p class="loading-text">Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { 
+            Settings, BarChart3, Activity, Database, Plus, Edit2, Trash2,
+            Save, X, ChevronDown, ChevronUp, Copy, Search, Filter,
+            HelpCircle, AlertCircle, Download
+        } = lucide;
+
+        // Initialize Supabase client
+        const supabase = window.supabase.createClient(
+            'https://your-supabase-url.supabase.co', // Replace with actual URL
+            'your-supabase-anon-key' // Replace with actual key
+        );
+
+        const QuestionManager = ({ onUpdateQuestions }) => {
+            const [questions, setQuestions] = useState([]);
+            const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
+            const [questionEffectiveness, setQuestionEffectiveness] = useState({});
+            const [questionTypes, setQuestionTypes] = useState([]);
+            const [scoreDimensions, setScoreDimensions] = useState([]);
+
+            const [editingId, setEditingId] = useState(null);
+            const [expandedId, setExpandedId] = useState(null);
+            const [filterType, setFilterType] = useState('all');
+            const [searchTerm, setSearchTerm] = useState('');
+            const [showAddForm, setShowAddForm] = useState(false);
+            const [formData, setFormData] = useState({
+                id: '',
+                type: '',
+                priority: null,
+                question: '',
+                options: []
+            });
+
+            useEffect(() => {
+                const fetchQuestions = async () => {
+                    try {
+                        // For now, we'll use mock data since we don't have the exact Supabase setup
+                        // In a real implementation, you'd uncomment the Supabase calls below
+                        
+                        /*
+                        const { data: questionsData, error: questionsError } = await supabase
+                            .from('questions')
+                            .select(`
+                                id,
+                                question_id,
+                                type,
+                                priority,
+                                question_text,
+                                question_options (
+                                    option_text,
+                                    option_emoji,
+                                    option_index,
+                                    scores
+                                )
+                            `)
+                            .order('priority', { ascending: false });
+
+                        if (questionsError) throw questionsError;
+                        */
+
+                        // Mock data for demonstration
+                        const questionsData = [
+                            {
+                                id: 1,
+                                question_id: 'Q1_DIFFICULTY_1',
+                                type: 'difficulty',
+                                priority: 10,
+                                question_text: 'What is your preferred course difficulty level?',
+                                question_options: [
+                                    {
+                                        option_text: 'Beginner friendly',
+                                        option_emoji: '🟢',
+                                        option_index: 0,
+                                        scores: { overall_difficulty: 2, strategic_variety: 3 }
+                                    },
+                                    {
+                                        option_text: 'Moderate challenge',
+                                        option_emoji: '🟡',
+                                        option_index: 1,
+                                        scores: { overall_difficulty: 5, strategic_variety: 6 }
+                                    },
+                                    {
+                                        option_text: 'Challenging',
+                                        option_emoji: '🟠',
+                                        option_index: 2,
+                                        scores: { overall_difficulty: 8, strategic_variety: 7 }
+                                    }
+                                ]
+                            },
+                            {
+                                id: 2,
+                                question_id: 'Q2_STRATEGY_1',
+                                type: 'strategy',
+                                priority: 9,
+                                question_text: 'How do you prefer to approach course strategy?',
+                                question_options: [
+                                    {
+                                        option_text: 'Aggressive play',
+                                        option_emoji: '⚡',
+                                        option_index: 0,
+                                        scores: { strategic_variety: 8, penal_vs_playable: 7 }
+                                    },
+                                    {
+                                        option_text: 'Conservative approach',
+                                        option_emoji: '🛡️',
+                                        option_index: 1,
+                                        scores: { strategic_variety: 4, penal_vs_playable: 3 }
+                                    }
+                                ]
+                            }
+                        ];
+
+                        const effectivenessData = [
+                            { question_id: 'Q1_DIFFICULTY_1', total_uses: 45, total_effectiveness: 180, average_effectiveness: 4.0 },
+                            { question_id: 'Q2_STRATEGY_1', total_uses: 38, total_effectiveness: 152, average_effectiveness: 4.0 }
+                        ];
+
+                        const uniqueTypes = [...new Set(questionsData?.map(t => t.type) || [])];
+                        setQuestionTypes(uniqueTypes);
+
+                        if (questionsData && questionsData.length > 0) {
+                            const firstQuestionWithScores = questionsData.find(q => 
+                                q.question_options?.some(opt => opt.scores && Object.keys(opt.scores).length > 0)
+                            );
+                            if (firstQuestionWithScores) {
+                                const dimensions = Object.keys(firstQuestionWithScores.question_options[0].scores || {});
+                                setScoreDimensions(dimensions);
+                            }
+                        }
+
+                        const formattedQuestions = questionsData.map(q => ({
+                            id: q.question_id,
+                            dbId: q.id,
+                            type: q.type,
+                            priority: q.priority,
+                            question: q.question_text,
+                            options: q.question_options
+                                .sort((a, b) => a.option_index - b.option_index)
+                                .map(opt => ({
+                                    text: opt.option_text,
+                                    image: opt.option_emoji,
+                                    scores: opt.scores
+                                }))
+                        }));
+
+                        const effectivenessMap = {};
+                        effectivenessData?.forEach(row => {
+                            effectivenessMap[row.question_id] = {
+                                totalUses: row.total_uses || 0,
+                                effectiveness: row.total_effectiveness || 0,
+                                averageEffectiveness: row.average_effectiveness || 0
+                            };
+                        });
+
+                        setQuestions(formattedQuestions);
+                        setQuestionEffectiveness(effectivenessMap);
+                        
+                        if (uniqueTypes.length > 0 && !formData.type) {
+                            setFormData(prev => ({
+                                ...prev,
+                                type: uniqueTypes[0],
+                                priority: 5,
+                                options: Array(4).fill().map(() => ({ text: '', image: '', scores: {} }))
+                            }));
+                        }
+                        
+                        setIsLoadingQuestions(false);
+                    } catch (error) {
+                        console.error('Error fetching questions:', error);
+                        setIsLoadingQuestions(false);
+                    }
+                };
+                fetchQuestions();
+            }, []);
+
+            const filteredQuestions = questions.filter(q => {
+                const matchesType = filterType === 'all' || q.type === filterType;
+                const matchesSearch = searchTerm === '' ||
+                    q.question.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    q.id.toLowerCase().includes(searchTerm.toLowerCase());
+                return matchesType && matchesSearch;
+            });
+
+            const handleEdit = (question) => {
+                setEditingId(question.id);
+                setFormData({
+                    ...question,
+                    options: question.options.map(opt => ({
+                        ...opt,
+                        scores: opt.scores || {}
+                    }))
+                });
+                setShowAddForm(false);
+            };
+
+            const handleSave = async () => {
+                if (!formData.question || !formData.id) {
+                    alert('Please provide both a question ID and question text');
+                    return;
+                }
+            
+                const validOptions = formData.options.filter(opt => opt.text);
+                if (validOptions.length < 2) {
+                    alert('Please provide at least 2 answer options');
+                    return;
+                }
+            
+                try {
+                    // Mock save - in real implementation, you'd use Supabase
+                    alert('Question saved successfully! (Mock save)');
+                    
+                    // Refresh the questions list
+                    window.location.reload();
+                } catch (error) {
+                    console.error('Error saving question:', error);
+                    alert('Failed to save question: ' + error.message);
+                }
+            };
+
+            const handleDelete = async (id) => {
+                if (window.confirm('Delete this question? This cannot be undone.')) {
+                    try {
+                        // Mock delete - in real implementation, you'd use Supabase
+                        setQuestions(questions.filter(q => q.id !== id));
+                        alert('Question deleted successfully! (Mock delete)');
+                    } catch (error) {
+                        console.error('Error deleting question:', error);
+                        alert('Failed to delete question: ' + error.message);
+                    }
+                }
+            };
+
+            const updateOption = (optionIndex, field, value) => {
+                const newOptions = [...formData.options];
+                newOptions[optionIndex] = {
+                    ...newOptions[optionIndex],
+                    [field]: value
+                };
+                setFormData({ ...formData, options: newOptions });
+            };
+
+            const updateOptionScore = (optionIndex, dimension, value) => {
+                const newOptions = [...formData.options];
+                const numValue = value === '' ? undefined : parseInt(value);
+
+                if (dimension === 'courseStyle') {
+                    newOptions[optionIndex].scores = {
+                        ...newOptions[optionIndex].scores,
+                        courseStyle: value
+                    };
+                } else {
+                    newOptions[optionIndex].scores = {
+                        ...newOptions[optionIndex].scores,
+                        [dimension]: numValue
+                    };
+                }
+
+                setFormData({ ...formData, options: newOptions });
+            };
+
+            const exportQuestions = () => {
+                const dataStr = JSON.stringify(questions, null, 2);
+                const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+                const exportFileDefaultName = `questions_${new Date().toISOString().split('T')[0]}.json`;
+                const linkElement = document.createElement('a');
+                linkElement.setAttribute('href', dataUri);
+                linkElement.setAttribute('download', exportFileDefaultName);
+                linkElement.click();
+            };
+
+            if (isLoadingQuestions) {
+                return (
+                    <div style={{ 
+                        textAlign: 'center', 
+                        padding: 48, 
+                        backgroundColor: '#ffffff', 
+                        borderRadius: 8,
+                        border: '1px solid #e5e7eb'
+                    }}>
+                        <Activity size={32} style={{ margin: '0 auto 12px', color: '#9ca3af' }} />
+                        <p style={{ color: '#6b7280' }}>Loading questions...</p>
+                    </div>
+                );
+            }
+
+            return (
+                <>
+                    <div style={{ marginBottom: 24 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                            <h2 style={{ fontSize: 20, fontWeight: 600, color: '#111827' }}>Question Bank</h2>
+                            <div style={{ display: 'flex', gap: 12 }}>
+                                <button
+                                    onClick={exportQuestions}
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: '#ffffff',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: 6,
+                                        fontSize: 14,
+                                        color: '#374151',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 8
+                                    }}
+                                >
+                                    <Download size={16} />
+                                    Export
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowAddForm(true);
+                                        setEditingId(null);
+                                        setFormData({
+                                            id: '',
+                                            type: questionTypes[0] || '',
+                                            priority: 5,
+                                            question: '',
+                                            options: Array(4).fill().map(() => ({ text: '', image: '', scores: {} }))
+                                        });
+                                    }}
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: '#3b82f6',
+                                        border: 'none',
+                                        borderRadius: 6,
+                                        fontSize: 14,
+                                        color: '#ffffff',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 8
+                                    }}
+                                >
+                                    <Plus size={16} />
+                                    Add Question
+                                </button>
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
+                            <div style={{ flex: 1, position: 'relative' }}>
+                                <Search size={18} style={{ position: 'absolute', left: 12, top: 10, color: '#9ca3af' }} />
+                                <input
+                                    type="text"
+                                    placeholder="Search questions..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    style={{
+                                        width: '100%',
+                                        padding: '8px 12px 8px 40px',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: 6,
+                                        fontSize: 14
+                                    }}
+                                />
+                            </div>
+                            <select
+                                value={filterType}
+                                onChange={(e) => setFilterType(e.target.value)}
+                                style={{
+                                    padding: '8px 12px',
+                                    border: '1px solid #d1d5db',
+                                    borderRadius: 6,
+                                    fontSize: 14,
+                                    backgroundColor: '#ffffff'
+                                }}
+                            >
+                                <option value="all">All Types</option>
+                                {questionTypes.map(type => (
+                                    <option key={type} value={type}>{type}</option>
+                                ))}
+                            </select>
+                            <div style={{ display: 'flex', alignItems: 'center', fontSize: 14, color: '#6b7280' }}>
+                                {filteredQuestions.length} questions
+                            </div>
+                        </div>
+                    </div>
+
+                    {(showAddForm || editingId) && (
+                        <div style={{ 
+                            backgroundColor: '#ffffff', 
+                            border: '2px solid #3b82f6', 
+                            borderRadius: 8, 
+                            padding: 24, 
+                            marginBottom: 24 
+                        }}>
+                            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 20 }}>
+                                {editingId ? 'Edit Question' : 'Create New Question'}
+                            </h3>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 4 }}>ID</label>
+                                    <input
+                                        type="text"
+                                        value={formData.id}
+                                        onChange={(e) => setFormData({...formData, id: e.target.value})}
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            border: '1px solid #d1d5db',
+                                            borderRadius: 4,
+                                            fontSize: 14
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Type</label>
+                                    <select
+                                        value={formData.type}
+                                        onChange={(e) => setFormData({...formData, type: e.target.value})}
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            border: '1px solid #d1d5db',
+                                            borderRadius: 4,
+                                            fontSize: 14
+                                        }}
+                                    >
+                                        {questionTypes.map(type => (
+                                            <option key={type} value={type}>{type}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Priority (1-10)</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="10"
+                                        value={formData.priority || ''}
+                                        onChange={(e) => setFormData({...formData, priority: parseInt(e.target.value)})}
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            border: '1px solid #d1d5db',
+                                            borderRadius: 4,
+                                            fontSize: 14
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Question</label>
+                                    <input
+                                        type="text"
+                                        value={formData.question}
+                                        onChange={(e) => setFormData({...formData, question: e.target.value})}
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            border: '1px solid #d1d5db',
+                                            borderRadius: 4,
+                                            fontSize: 14
+                                        }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div style={{ marginBottom: 20 }}>
+                                <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Answer Options</h4>
+                                {formData.options.map((option, idx) => (
+                                    <div key={idx} style={{ 
+                                        backgroundColor: '#f9fafb', 
+                                        padding: 16, 
+                                        borderRadius: 6, 
+                                        marginBottom: 12 
+                                    }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12, marginBottom: 12 }}>
+                                            <input
+                                                type="text"
+                                                value={option.text}
+                                                onChange={(e) => updateOption(idx, 'text', e.target.value)}
+                                                placeholder="Answer text"
+                                                style={{
+                                                    padding: '6px 10px',
+                                                    border: '1px solid #d1d5db',
+                                                    borderRadius: 4,
+                                                    fontSize: 13
+                                                }}
+                                            />
+                                            <input
+                                                type="text"
+                                                value={option.image}
+                                                onChange={(e) => updateOption(idx, 'image', e.target.value)}
+                                                placeholder="Emoji"
+                                                style={{
+                                                    padding: '6px 10px',
+                                                    border: '1px solid #d1d5db',
+                                                    borderRadius: 4,
+                                                    fontSize: 13
+                                                }}
+                                            />
+                                            <button
+                                                onClick={() => {
+                                                    const newOptions = formData.options.filter((_, i) => i !== idx);
+                                                    setFormData({ ...formData, options: newOptions });
+                                                }}
+                                                style={{
+                                                    padding: '6px 12px',
+                                                    backgroundColor: '#fee2e2',
+                                                    color: '#dc2626',
+                                                    border: 'none',
+                                                    borderRadius: 4,
+                                                    fontSize: 12,
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                Remove
+                                            </button>
+                                        </div>
+
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+                                            {scoreDimensions.map(dim => (
+                                                <div key={dim}>
+                                                    <label style={{ fontSize: 11, color: '#6b7280' }}>{dim}</label>
+                                                    <input
+                                                        type={dim === 'courseStyle' ? 'text' : 'number'}
+                                                        value={option.scores[dim] || ''}
+                                                        onChange={(e) => updateOptionScore(idx, dim, e.target.value)}
+                                                        placeholder={dim === 'courseStyle' ? 'style' : '0-10'}
+                                                        min={dim === 'genderLean' ? -5 : 0}
+                                                        max={dim === 'genderLean' ? 5 : 10}
+                                                        style={{
+                                                            width: '100%',
+                                                            padding: '4px 6px',
+                                                            border: '1px solid #d1d5db',
+                                                            borderRadius: 3,
+                                                            fontSize: 12
+                                                        }}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                                
+                                <button
+                                    onClick={() => {
+                                        const newOptions = [...formData.options, { text: '', image: '', scores: {} }];
+                                        setFormData({ ...formData, options: newOptions });
+                                    }}
+                                    style={{
+                                        padding: '8px 12px',
+                                        backgroundColor: '#f3f4f6',
+                                        border: '1px dashed #9ca3af',
+                                        borderRadius: 4,
+                                        fontSize: 13,
+                                        cursor: 'pointer',
+                                        width: '100%'
+                                    }}
+                                >
+                                    + Add Option
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                                <button
+                                    onClick={() => {
+                                        setEditingId(null);
+                                        setShowAddForm(false);
+                                    }}
+                                    style={{
+                                        padding: '8px 20px',
+                                        backgroundColor: '#ffffff',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: 6,
+                                        fontSize: 14,
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleSave}
+                                    style={{
+                                        padding: '8px 20px',
+                                        backgroundColor: '#3b82f6',
+                                        color: '#ffffff',
+                                        border: 'none',
+                                        borderRadius: 6,
+                                        fontSize: 14,
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Save
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                        
+                    <div>
+                        {filteredQuestions.length === 0 ? (
+                            <div style={{ 
+                                textAlign: 'center', 
+                                padding: 48, 
+                                backgroundColor: '#ffffff', 
+                                borderRadius: 8,
+                                border: '1px solid #e5e7eb'
+                            }}>
+                                <HelpCircle size={32} style={{ margin: '0 auto 12px', color: '#9ca3af' }} />
+                                <p style={{ color: '#6b7280' }}>No questions found</p>
+                            </div>
+                        ) : (
+                            filteredQuestions.map(question => (
+                                <div key={question.id} style={{ 
+                                    backgroundColor: '#ffffff', 
+                                    border: '1px solid #e5e7eb',
+                                    borderRadius: 8, 
+                                    padding: 16,
+                                    marginBottom: 12
+                                }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                                                <span style={{
+                                                    padding: '2px 8px',
+                                                    backgroundColor: '#dbeafe',
+                                                    color: '#1e40af',
+                                                    borderRadius: 4,
+                                                    fontSize: 11,
+                                                    fontWeight: 500
+                                                }}>
+                                                    {question.type}
+                                                </span>
+                                                <span style={{
+                                                    padding: '2px 8px',
+                                                    backgroundColor: '#f3f4f6',
+                                                    color: '#4b5563',
+                                                    borderRadius: 4,
+                                                    fontSize: 11
+                                                }}>
+                                                    Priority: {question.priority}
+                                                </span>
+                                            </div>
+                                            <h3 style={{ fontSize: 16, fontWeight: 500, color: '#111827' }}>{question.question}</h3>
+                                            <div style={{ marginTop: 8, display: 'flex', gap: 12, fontSize: 12, color: '#6b7280' }}>
+                                                <span>Uses: {questionEffectiveness[question.id]?.totalUses || 0}</span>
+                                                <span>Effectiveness: {(questionEffectiveness[question.id]?.averageEffectiveness || 0).toFixed(2)}</span>
+                                            </div>             
+                                        </div>
+
+                                        <div style={{ display: 'flex', gap: 4 }}>
+                                            <button
+                                                onClick={() => setExpandedId(expandedId === question.id ? null : question.id)}
+                                                style={{
+                                                    padding: 6,
+                                                    backgroundColor: 'transparent',
+                                                    border: 'none',
+                                                    cursor: 'pointer',
+                                                    color: '#6b7280'
+                                                }}
+                                            >
+                                                {expandedId === question.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                                            </button>
+                                            <button
+                                                onClick={() => handleEdit(question)}
+                                                style={{
+                                                    padding: 6,
+                                                    backgroundColor: 'transparent',
+                                                    border: 'none',
+                                                    cursor: 'pointer',
+                                                    color: '#3b82f6'
+                                                }}
+                                            >
+                                                <Edit2 size={18} />
+                                            </button>
+                                            <button
+                                                onClick={() => handleDelete(question.id)}
+                                                style={{
+                                                    padding: 6,
+                                                    backgroundColor: 'transparent',
+                                                    border: 'none',
+                                                    cursor: 'pointer',
+                                                    color: '#ef4444'
+                                                }}
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {expandedId === question.id && (
+                                        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #e5e7eb' }}>
+                                            {question.options.map((option, idx) => (
+                                                <div key={idx} style={{ 
+                                                    backgroundColor: '#f9fafb', 
+                                                    padding: 12, 
+                                                    borderRadius: 6,
+                                                    marginBottom: 8
+                                                }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                                                        <span style={{ fontSize: 20 }}>{option.image}</span>
+                                                        <span style={{ fontWeight: 500 }}>{option.text}</span>
+                                                    </div>
+                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                                        {Object.entries(option.scores || {}).map(([key, value]) => (
+                                                            <span key={key} style={{
+                                                                padding: '2px 6px',
+                                                                backgroundColor: '#ffffff',
+                                                                border: '1px solid #e5e7eb',
+                                                                borderRadius: 3,
+                                                                fontSize: 11
+                                                            }}>
+                                                                {key}: <strong>{value}</strong>
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </>
+            );
+        };
+
+        // Main MLAdminInterface Component
+        const MLAdminInterface = () => {
+            const [activeTab, setActiveTab] = useState('questions');
+            const [profileCount, setProfileCount] = useState(0);
+            const [loading, setLoading] = useState(true);
+            const [scoringConfig, setScoringConfig] = useState(null);
+            const [modelWeights, setModelWeights] = useState([]);
+            const [questionSelectionConfig, setQuestionSelectionConfig] = useState(null);
+
+            useEffect(() => {
+                const loadAdminData = async () => {
+                    try {
+                        setLoading(true);
+                        
+                        // Mock data for demonstration
+                        setScoringConfig({
+                            algorithm_name: 'Weighted Scoring v2.1',
+                            version: '2.1',
+                            notes: 'Advanced scoring algorithm with dimension weighting',
+                            dimension_weights: {
+                                overall_difficulty: 0.25,
+                                strategic_variety: 0.20,
+                                penal_vs_playable: 0.15,
+                                physical_demands: 0.15,
+                                weather_adaptability: 0.10,
+                                conditions_quality: 0.15
+                            },
+                            question_type_weights: {
+                                difficulty: 1.0,
+                                strategy: 0.9,
+                                amenities: 0.8,
+                                conditions: 0.7
+                            }
+                        });
+
+                        setModelWeights([
+                            { id: 1, dimension: 'overall_difficulty', weight: 0.25 },
+                            { id: 2, dimension: 'strategic_variety', weight: 0.20 },
+                            { id: 3, dimension: 'penal_vs_playable', weight: 0.15 },
+                            { id: 4, dimension: 'physical_demands', weight: 0.15 },
+                            { id: 5, dimension: 'weather_adaptability', weight: 0.10 },
+                            { id: 6, dimension: 'conditions_quality', weight: 0.15 }
+                        ]);
+
+                        setQuestionSelectionConfig({
+                            algorithm_name: 'Smart Selection v1.5',
+                            version: '1.5',
+                            notes: 'Intelligent question selection based on user responses',
+                            selection_logic: {
+                                max_questions: 10,
+                                min_questions: 5,
+                                coverage_threshold: 0.7,
+                                effectiveness_weight: 0.3
+                            }
+                        });
+                        
+                        setProfileCount(127);
+                    
+                    } catch (error) {
+                        console.error('Error loading admin data:', error);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                loadAdminData();
+            }, []);
+                
+            if (loading) {
+                return (
+                    <div style={{ 
+                        minHeight: '100vh', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        backgroundColor: '#f9fafb'
+                    }}>
+                        <div style={{ textAlign: 'center' }}>
+                            <Activity size={48} style={{ margin: '0 auto 16px', color: '#9ca3af' }} />
+                            <p style={{ color: '#6b7280' }}>Loading...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb' }}>
+                    <div style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb' }}>
+                        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px' }}>
+                            <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', marginBottom: 4 }}>
+                                ML Admin Console
+                            </h1>
+                            <p style={{ fontSize: 14, color: '#6b7280' }}>
+                                Manage questions and view algorithm configurations
+                            </p>
+                        </div>
+                    </div>
+
+                    <div style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, zIndex: 10 }}>
+                        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px' }}>
+                            <nav style={{ display: 'flex', gap: 32 }}>
+                                {[
+                                    { id: 'questions', label: 'Questions' },
+                                    { id: 'algorithms', label: 'Algorithms' }
+                                ].map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        style={{
+                                            padding: '16px 0',
+                                            backgroundColor: 'transparent',
+                                            border: 'none',
+                                            borderBottom: activeTab === tab.id ? '2px solid #3b82f6' : '2px solid transparent',
+                                            color: activeTab === tab.id ? '#3b82f6' : '#6b7280',
+                                            fontSize: 14,
+                                            fontWeight: 500,
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                ))}
+                            </nav>
+                        </div>
+                    </div>
+
+                    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
+                        {activeTab === 'questions' && (
+                            <QuestionManager />
+                        )}
+
+                        {activeTab === 'algorithms' && (
+                            <div>
+                                <div style={{ 
+                                    display: 'grid', 
+                                    gridTemplateColumns: 'repeat(2, 1fr)', 
+                                    gap: 16,
+                                    marginBottom: 32
+                                }}>
+                                    <div style={{ 
+                                        backgroundColor: '#ffffff', 
+                                        padding: 20,
+                                        borderRadius: 8,
+                                        border: '1px solid #e5e7eb'
+                                    }}>
+                                        <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>Total Profiles</p>
+                                        <p style={{ fontSize: 28, fontWeight: 600, color: '#111827' }}>{profileCount}</p>
+                                    </div>
+                                    <div style={{ 
+                                        backgroundColor: '#ffffff', 
+                                        padding: 20,
+                                        borderRadius: 8,
+                                        border: '1px solid #e5e7eb'
+                                    }}>
+                                        <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>Active Algorithms</p>
+                                        <p style={{ fontSize: 28, fontWeight: 600, color: '#111827' }}>
+                                            {(scoringConfig ? 1 : 0) + (questionSelectionConfig ? 1 : 0)}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 16 }}>Active Algorithms</h2>
+                                
+                                <div style={{ display: 'grid', gap: 16 }}>
+                                    {/* Scoring Algorithm Details */}
+                                    {scoringConfig && (
+                                        <div style={{ 
+                                            backgroundColor: '#ffffff',
+                                            padding: 24,
+                                            borderRadius: 8,
+                                            border: '1px solid #e5e7eb'
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 20 }}>
+                                                <div>
+                                                    <h3 style={{ fontSize: 18, fontWeight: 600, color: '#111827' }}>{scoringConfig.algorithm_name}</h3>
+                                                    <p style={{ fontSize: 14, color: '#6b7280', marginTop: 4 }}>{scoringConfig.notes || 'Scoring algorithm'}</p>
+                                                </div>
+                                                <span style={{
+                                                    padding: '4px 12px',
+                                                    backgroundColor: '#dcfce7',
+                                                    color: '#166534',
+                                                    borderRadius: 20,
+                                                    fontSize: 12,
+                                                    fontWeight: 500
+                                                }}>
+                                                    {scoringConfig.version}
+                                                </span>
+                                            </div>
+                                            
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                                                <div>
+                                                    <h4 style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 12 }}>Dimension Weights</h4>
+                                                    <div style={{ backgroundColor: '#f9fafb', padding: 12, borderRadius: 6, fontSize: 13, fontFamily: 'monospace' }}>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                                            {Object.entries(scoringConfig.dimension_weights || {}).map(([key, value]) => (
+                                                                <div key={key}>{key}: {value}</div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div>
+                                                    <h4 style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 12 }}>Question Type Weights</h4>
+                                                    <div style={{ backgroundColor: '#f9fafb', padding: 12, borderRadius: 6, fontSize: 13, fontFamily: 'monospace' }}>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                                            {Object.entries(scoringConfig.question_type_weights || {}).map(([key, value]) => (
+                                                                <div key={key}>{key}: {value}</div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Question Selection Details */}
+                                    {questionSelectionConfig && (
+                                        <div style={{ 
+                                            backgroundColor: '#ffffff',
+                                            padding: 24,
+                                            borderRadius: 8,
+                                            border: '1px solid #e5e7eb'
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 20 }}>
+                                                <div>
+                                                    <h3 style={{ fontSize: 18, fontWeight: 600, color: '#111827' }}>{questionSelectionConfig.algorithm_name}</h3>
+                                                    <p style={{ fontSize: 14, color: '#6b7280', marginTop: 4 }}>{questionSelectionConfig.notes || 'Question selection algorithm'}</p>
+                                                </div>
+                                                <span style={{
+                                                    padding: '4px 12px',
+                                                    backgroundColor: '#dcfce7',
+                                                    color: '#166534',
+                                                    borderRadius: 20,
+                                                    fontSize: 12,
+                                                    fontWeight: 500
+                                                }}>
+                                                    {questionSelectionConfig.version}
+                                                </span>
+                                            </div>
+                                            
+                                            <div>
+                                                <h4 style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 12 }}>Selection Logic</h4>
+                                                <div style={{ backgroundColor: '#f9fafb', padding: 12, borderRadius: 6, fontSize: 13, fontFamily: 'monospace' }}>
+                                                    {Object.entries(questionSelectionConfig.selection_logic || {}).map(([key, value]) => (
+                                                        <div key={key}>{key}: {typeof value === 'object' ? JSON.stringify(value) : value}</div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Model Weights Display */}
+                                    {modelWeights.length > 0 && (
+                                        <div style={{ 
+                                            backgroundColor: '#ffffff',
+                                            padding: 24,
+                                            borderRadius: 8,
+                                            border: '1px solid #e5e7eb'
+                                        }}>
+                                            <h3 style={{ fontSize: 18, fontWeight: 600, color: '#111827', marginBottom: 20 }}>Model Weights & Thresholds</h3>
+                                            <div style={{ backgroundColor: '#f9fafb', padding: 12, borderRadius: 6 }}>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                                                    {modelWeights.map(weight => (
+                                                        <div key={weight.id} style={{ fontSize: 13, fontFamily: 'monospace' }}>
+                                                            {weight.dimension}: {weight.weight}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // Render the app
+        ReactDOM.render(<MLAdminInterface />, document.getElementById('root'));
+    </script>
+</body>
+</html>
