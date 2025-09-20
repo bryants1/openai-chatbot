@@ -569,7 +569,9 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
             value = payload[`experience_${k}`] || payload[k] || 0;
           }
           if (typeof value === "number" && isFinite(value)) {
-            sum += value;
+            // Convert 0-100 range to -10 to +10 range for consistency
+            const convertedValue = (value - 50) / 5;
+            sum += convertedValue;
             count++;
           }
         }
@@ -622,7 +624,8 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       console.log(`[DEBUG] playing_overall_difficulty:`, payload.playing_overall_difficulty);
       console.log(`[DEBUG] experience_conditions_quality:`, payload.experience_conditions_quality);
       
-      const courseScores = {
+      // Convert course scores from 0-100 range to -10 to +10 range to match golfer scores
+      const rawCourseScores = {
         overall_difficulty: payload.playing_overall_difficulty || 0,
         strategic_variety: payload.playing_strategic_variety || 0,
         penal_vs_playable: payload.playing_penal_vs_playable || 0,
@@ -634,6 +637,12 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
         value_proposition: payload.experience_value_proposition || 0,
         aesthetic_appeal: payload.experience_aesthetic_appeal || 0
       };
+      
+      // Convert 0-100 range to -10 to +10 range for spider diagram consistency
+      const courseScores = {};
+      for (const [key, value] of Object.entries(rawCourseScores)) {
+        courseScores[key] = (value - 50) / 5; // Convert 0-100 to -10 to +10
+      }
       
       console.log(`[DEBUG] Extracted courseScores:`, courseScores);
       
