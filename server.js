@@ -111,10 +111,10 @@ app.get("/", (_req, res) => {
   .reset-btn:hover{background:#dc3545;color:white}
   .muted{color:var(--muted);font-size:14px}
   .row{display:flex;gap:8px;margin-top:10px}
-  textarea{width:100%;min-height:60px;padding:12px;border:1px solid var(--border);border-radius:10px;resize:vertical}
-  button{padding:10px 16px;border-radius:10px;border:1px solid var(--accent);background:#fff;color:var(--accent);cursor:pointer;font-weight:600;transition:all 0.2s ease;min-width:80px}
+  textarea{width:100%;min-height:50px;padding:10px;border:1px solid var(--border);border-radius:8px;resize:vertical}
+  button{padding:8px 14px;border-radius:8px;border:1px solid var(--accent);background:#fff;color:var(--accent);cursor:pointer;font-weight:600;transition:all 0.2s ease;min-width:70px}
   button:hover{background:#f2fffb}
-  .msg{padding:10px 12px;border-radius:10px;margin:8px 0;white-space:pre-wrap}
+  .msg{padding:8px 10px;border-radius:8px;margin:6px 0;white-space:pre-wrap}
   .me{background:#e9f7ff}
   .bot{background:#f7f7f7}
   .status{padding:8px;margin:8px 0;border-radius:6px;font-size:14px}
@@ -597,15 +597,36 @@ app.get("/api/admin/questions", async (req, res) => {
 });
 
 app.get("/api/admin/stats", async (req, res) => {
+  console.log("[admin] Stats endpoint called!");
   try {
     if (!supabase) {
       return res.status(500).json({ error: "Supabase not configured" });
     }
 
-    // Get total profiles count
-    const { count: totalProfiles } = await supabase
-      .from('user_profiles')
-      .select('*', { count: 'exact', head: true });
+    // Get total profiles count - use simple select and count manually
+    const profilesResult = await supabase
+      .from('user_profile')
+      .select('user_id');
+
+    // Debug: Also check sessions
+    const sessionsResult = await supabase
+      .from('user_session')
+      .select('session_id');
+
+    const totalProfiles = profilesResult.data?.length || 0;
+    const totalSessions = sessionsResult.data?.length || 0;
+
+    console.log(`[admin] Stats endpoint called! Profiles: ${totalProfiles}, Sessions: ${totalSessions}`);
+    console.log(`[admin] Profiles result:`, JSON.stringify(profilesResult, null, 2));
+    console.log(`[admin] Profiles error:`, profilesResult.error);
+    
+    if (profilesResult.error) {
+      console.error(`[admin] Profile query failed:`, profilesResult.error);
+    }
+    
+    if (totalProfiles === 0) {
+      console.log(`[admin] Profile count is 0 - checking if table exists...`);
+    }
 
     // Get active algorithms count
     const { data: scoringAlg } = await supabase
@@ -632,8 +653,539 @@ app.get("/api/admin/stats", async (req, res) => {
   }
 });
 
+// POST endpoint to create a new question
+app.post("/api/admin/questions", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    const { id, type, priority, question, options } = req.body;
+
+    if (!id || !question || !options || options.length < 2) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Insert the question
+    const { data: newQuestion, error: questionError } = await supabase
+      .from('questions')
+      .insert({
+        question_id: id,
+        type: type,
+        priority: priority,
+        question_text: question
+      })
+      .select()
+      .single();
+
+    if (questionError) throw questionError;
+
+    // Insert the options
+    const optionsToInsert = options
+      .filter(opt => opt.text)
+      .map((opt, idx) => ({
+        question_id: newQuestion.id,
+        option_text: opt.text,
+        option_emoji: opt.image || '',
+        option_index: idx,
+        scores: opt.scores || {}
+      }));
+
+    const { error: optionsError } = await supabase
+      .from('question_options')
+      .insert(optionsToInsert);
+
+    if (optionsError) throw optionsError;
+
+    res.json({ success: true, question: newQuestion });
+  } catch (error) {
+    console.error('Error creating question:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT endpoint to update a question
+app.put("/api/admin/questions/:id", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    const { id } = req.params;
+    const { type, priority, question, options } = req.body;
+
+    if (!question || !options || options.length < 2) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Find the question by question_id
+    const { data: existingQuestion, error: findError } = await supabase
+      .from('questions')
+      .select('id')
+      .eq('question_id', id)
+      .single();
+
+    if (findError) throw findError;
+
+    // Update the question
+    const { error: questionError } = await supabase
+      .from('questions')
+      .update({
+        type: type,
+        priority: priority,
+        question_text: question
+      })
+      .eq('id', existingQuestion.id);
+
+    if (questionError) throw questionError;
+
+    // Delete existing options
+    await supabase
+      .from('question_options')
+      .delete()
+      .eq('question_id', existingQuestion.id);
+
+    // Insert new options
+    const optionsToInsert = options
+      .filter(opt => opt.text)
+      .map((opt, idx) => ({
+        question_id: existingQuestion.id,
+        option_text: opt.text,
+        option_emoji: opt.image || '',
+        option_index: idx,
+        scores: opt.scores || {}
+      }));
+
+    const { error: optionsError } = await supabase
+      .from('question_options')
+      .insert(optionsToInsert);
+
+    if (optionsError) throw optionsError;
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating question:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE endpoint to delete a question
+app.delete("/api/admin/questions/:id", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    const { id } = req.params;
+
+    // Find the question by question_id
+    const { data: existingQuestion, error: findError } = await supabase
+      .from('questions')
+      .select('id')
+      .eq('question_id', id)
+      .single();
+
+    if (findError) throw findError;
+
+    // Delete the question (options will be deleted by cascade)
+    const { error } = await supabase
+      .from('questions')
+      .delete()
+      .eq('id', existingQuestion.id);
+
+    if (error) throw error;
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting question:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// GET endpoint for question types
+app.get("/api/admin/question-types", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    const { data: typesData } = await supabase
+      .from('questions')
+      .select('type')
+      .order('type');
+    
+    const uniqueTypes = [...new Set(typesData?.map(t => t.type) || [])];
+    res.json({ types: uniqueTypes });
+  } catch (error) {
+    console.error('Error fetching question types:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT endpoint to update algorithm weights
+app.put("/api/admin/algorithm-weights", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    const { dimension_weights, question_type_weights } = req.body;
+
+    if (!dimension_weights && !question_type_weights) {
+      return res.status(400).json({ error: "Must provide dimension_weights or question_type_weights" });
+    }
+
+    // Get the current active scoring algorithm
+    const { data: currentAlg, error: findError } = await supabase
+      .from('scoring_algorithms')
+      .select('*')
+      .eq('is_active', true)
+      .single();
+
+    if (findError) {
+      return res.status(404).json({ error: "No active scoring algorithm found" });
+    }
+
+    // Update the algorithm with new weights
+    const updateData = {};
+    if (dimension_weights) updateData.dimension_weights = dimension_weights;
+    if (question_type_weights) updateData.question_type_weights = question_type_weights;
+
+    const { error: updateError } = await supabase
+      .from('scoring_algorithms')
+      .update(updateData)
+      .eq('id', currentAlg.id);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating algorithm weights:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Simple test endpoint
+app.get("/test-admin/test", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    // Simple count test
+    const result = await supabase.from('user_profile').select('user_id');
+    
+    res.json({
+      success: true,
+      count: result.data?.length || 0,
+      error: result.error
+    });
+  } catch (error) {
+    console.error('Error in test endpoint:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Debug endpoint to check database contents
+app.get("/api/admin/debug", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    // Check all relevant tables
+    const [profilesResult, sessionsResult, questionsResult] = await Promise.all([
+      supabase.from('user_profile').select('*', { count: 'exact', head: true }),
+      supabase.from('user_session').select('*', { count: 'exact', head: true }),
+      supabase.from('questions').select('*', { count: 'exact', head: true })
+    ]);
+
+    // Get a few sample records
+    const [sampleProfiles, sampleSessions] = await Promise.all([
+      supabase.from('user_profile').select('*').limit(3),
+      supabase.from('user_session').select('*').limit(3)
+    ]);
+
+    res.json({
+      counts: {
+        profiles: profilesResult.count || 0,
+        sessions: sessionsResult.count || 0,
+        questions: questionsResult.count || 0
+      },
+      samples: {
+        profiles: sampleProfiles.data || [],
+        sessions: sampleSessions.data || []
+      }
+    });
+  } catch (error) {
+    console.error('Error in debug endpoint:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Course similarity search endpoint (before chat router to avoid conflicts)
+app.get("/api/courses/similar/:courseName", async (req, res) => {
+  try {
+    const { courseName } = req.params;
+    const { limit = 8, location, radius } = req.query;
+    
+    if (!courseQdrant) {
+      return res.status(500).json({ error: "Course database not configured" });
+    }
+
+    // First, find the course by name in Qdrant
+    const collection = process.env.COURSE_QDRANT_COLLECTION || "10d_golf_courses";
+    
+    // Get all courses and filter by name (since there's no index for course_name)
+    const results = await courseQdrant.scroll(collection, {
+      with_payload: true,
+      with_vectors: true,
+      limit: 1000 // Get a large batch to search through
+    });
+
+    if (!results?.points || results.points.length === 0) {
+      return res.status(404).json({ error: `No courses found in database` });
+    }
+
+    // Find the best match by name (case-insensitive)
+    const targetPoint = results.points.find(p => 
+      p.payload?.course_name?.toLowerCase().includes(courseName.toLowerCase())
+    );
+
+    if (!targetPoint) {
+      return res.status(404).json({ error: `Course "${courseName}" not found` });
+    }
+
+    const targetCourse = targetPoint.payload;
+    
+    // Debug: Log the actual payload structure and vector (can be removed in production)
+    // console.log('Target course payload:', JSON.stringify(targetCourse, null, 2));
+    // console.log('Target course vector:', targetPoint.vector);
+    // console.log('Target course vector length:', targetPoint.vector?.length);
+    // console.log('Target course vector type:', typeof targetPoint.vector);
+    
+    // Get the course's vector scores for similarity search
+    // Extract from the actual payload structure and convert from 0-100 to 0-10 range
+    const courseScores = {
+      overall_difficulty: (targetCourse.playing_overall_difficulty || 0) / 10,
+      strategic_variety: (targetCourse.playing_strategic_variety || 0) / 10,
+      penal_vs_playable: (targetCourse.playing_penal_vs_playable || 0) / 10,
+      physical_demands: (targetCourse.playing_physical_demands || 0) / 10,
+      weather_adaptability: (targetCourse.playing_weather_adaptability || 0) / 10,
+      conditions_quality: (targetCourse.experience_conditions_quality || 0) / 10,
+      facilities_amenities: (targetCourse.experience_facilities_amenities || 0) / 10,
+      service_operations: (targetCourse.experience_service_operations || 0) / 10,
+      value_proposition: (targetCourse.experience_value_proposition || 0) / 10,
+      aesthetic_appeal: (targetCourse.experience_aesthetic_appeal || 0) / 10
+    };
+
+    // Use MLService to find similar courses
+    const MLService = (await import('./quiz/ml/MLService.js')).default;
+    const ml = new MLService();
+    
+    const searchOptions = {
+      topK: parseInt(limit) + 1, // +1 to account for filtering out the original
+      location: location ? JSON.parse(location) : undefined
+    };
+
+    // If radius is provided, use the target course's location for filtering
+    if (radius && targetCourse.latitude && targetCourse.longitude) {
+      searchOptions.location = {
+        coords: {
+          lat: targetCourse.latitude,
+          lon: targetCourse.longitude
+        },
+        radius: parseInt(radius) // radius in miles
+      };
+    }
+
+    // console.log('Searching for similar courses with scores:', courseScores);
+    const similarCourses = await ml.getCourseMatchesBy5D(courseScores, searchOptions);
+    // console.log('Found similar courses:', similarCourses.length);
+    
+    // Filter out the original course from results
+    const filteredCourses = similarCourses.filter(course => 
+      course.course_id !== targetCourse.course_number && 
+      course.name !== targetCourse.course_name &&
+      course.name !== targetCourse.db_course_name
+    );
+
+    res.json({
+      targetCourse: {
+        course_id: targetCourse.course_number,
+        name: targetCourse.course_name,
+        url: targetCourse.course_url || targetCourse.website,
+        scores: courseScores
+      },
+      similarCourses: filteredCourses.slice(0, parseInt(limit)),
+      // debug: {
+      //   payload: targetCourse,
+      //   vector: targetPoint.vector,
+      //   vectorLength: targetPoint.vector?.length,
+      //   vectorType: typeof targetPoint.vector,
+      //   courseScores: courseScores,
+      //   similarCoursesCount: similarCourses.length
+      // }
+    });
+  } catch (error) {
+    console.error('Error finding similar courses:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Mount chat routes
 app.use("/api", chatRouter);
+
+// Admin API routes (moved after chat router to avoid conflicts)
+
+// Admin API endpoints
+app.get("/api/admin/questions", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    const { data: questionsData, error: questionsError } = await supabase
+      .from('questions')
+      .select(`
+        id,
+        question_id,
+        type,
+        priority,
+        question_text,
+        question_options (
+          option_text,
+          option_emoji,
+          option_index,
+          scores
+        )
+      `)
+      .order('priority', { ascending: false });
+
+    if (questionsError) throw questionsError;
+
+    const formattedQuestions = questionsData.map(q => ({
+      id: q.question_id,
+      dbId: q.id,
+      type: q.type,
+      priority: q.priority,
+      question: q.question_text,
+      options: q.question_options
+        .sort((a, b) => a.option_index - b.option_index)
+        .map(opt => ({
+          text: opt.option_text,
+          emoji: opt.option_emoji,
+          index: opt.option_index,
+          scores: opt.scores || {}
+        }))
+    }));
+
+    res.json({ questions: formattedQuestions });
+  } catch (error) {
+    console.error('Error fetching questions:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/admin/stats", async (req, res) => {
+  console.log("[admin] Stats endpoint called!");
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    // Get total profiles count - use simple select and count manually
+    const profilesResult = await supabase
+      .from('user_profile')
+      .select('user_id');
+
+    // Debug: Also check sessions
+    const sessionsResult = await supabase
+      .from('user_session')
+      .select('session_id');
+
+    const totalProfiles = profilesResult.data?.length || 0;
+    const totalSessions = sessionsResult.data?.length || 0;
+
+    console.log(`[admin] Stats endpoint called! Profiles: ${totalProfiles}, Sessions: ${totalSessions}`);
+    console.log(`[admin] Profiles result:`, JSON.stringify(profilesResult, null, 2));
+    console.log(`[admin] Profiles error:`, profilesResult.error);
+    
+    if (profilesResult.error) {
+      console.error(`[admin] Profile query failed:`, profilesResult.error);
+    }
+    
+    if (totalProfiles === 0) {
+      console.log(`[admin] Profile count is 0 - checking if table exists...`);
+    }
+
+    // Get active algorithms count
+    const { data: scoringAlg } = await supabase
+      .from('scoring_algorithms')
+      .select('*')
+      .eq('is_active', true)
+      .single();
+
+    const { data: questionAlg } = await supabase
+      .from('question_selection_algorithms')
+      .select('*')
+      .eq('is_active', true)
+      .single();
+
+    res.json({
+      totalProfiles: totalProfiles,
+      activeAlgorithms: (scoringAlg ? 1 : 0) + (questionAlg ? 1 : 0),
+      scoringConfig: scoringAlg,
+      questionSelectionConfig: questionAlg
+    });
+  } catch (error) {
+    console.error('Error fetching stats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put("/api/admin/algorithm-weights", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    const { dimension_weights, question_type_weights } = req.body;
+
+    if (!dimension_weights && !question_type_weights) {
+      return res.status(400).json({ error: "Must provide dimension_weights or question_type_weights" });
+    }
+
+    // Get the current active scoring algorithm
+    const { data: currentAlg, error: findError } = await supabase
+      .from('scoring_algorithms')
+      .select('*')
+      .eq('is_active', true)
+      .single();
+
+    if (findError) {
+      return res.status(404).json({ error: "No active scoring algorithm found" });
+    }
+
+    // Update the algorithm with new weights
+    const updateData = {};
+    if (dimension_weights) updateData.dimension_weights = dimension_weights;
+    if (question_type_weights) updateData.question_type_weights = question_type_weights;
+
+    const { error: updateError } = await supabase
+      .from('scoring_algorithms')
+      .update(updateData)
+      .eq('id', currentAlg.id);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating algorithm weights:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // -- Profile API Routes -------------------------------------------------
 app.post("/api/profile-session-start", async (req, res) => {

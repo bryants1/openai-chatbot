@@ -102,7 +102,7 @@ async function detectIntentWithOpenAI(text = "") {
           role: "system",
           content: `Analyze the user's message and determine their intent. Respond with a JSON object containing:
 {
-  "intent": "course_search" | "quiz_request" | "general_question" | "other",
+  "intent": "course_search" | "similar_courses" | "quiz_request" | "general_question" | "other",
   "confidence": 0.0-1.0,
   "location": "extracted location or null",
   "dateInfo": {"date": "extracted date string or null", "type": "date type (today, tomorrow, weekend, specific date, etc.) or null"},
@@ -111,11 +111,12 @@ async function detectIntentWithOpenAI(text = "") {
 
 Intent definitions:
 - "course_search": User wants to find/search for golf courses (e.g., "courses in Boston", "golf courses near me", "best courses this weekend", "show me courses in wayland")
+- "similar_courses": User wants to find courses similar to a specific course (e.g., "show me courses similar to Pebble Beach", "courses like Augusta", "similar to Pinehurst")
 - "quiz_request": User wants to play golf or get personalized recommendations (e.g., "start quiz", "I want to play golf", "I'm looking to play a course", "recommend courses for me", "what courses match my skill level", "I want to play this weekend")
 - "general_question": General golf-related questions not about finding courses or playing
 - "other": Anything else
 
-Key distinction: If the user expresses intent to PLAY golf (not just find courses), classify as quiz_request. If they want to SEARCH/BROWSE courses, classify as course_search.`
+Key distinction: If the user expresses intent to PLAY golf (not just find courses), classify as quiz_request. If they want to SEARCH/BROWSE courses, classify as course_search. If they want courses SIMILAR TO a specific course, classify as similar_courses.`
         },
         {
           role: "user",
@@ -473,11 +474,11 @@ function renderReplyHTML(text = "", linkHints = []) {
 }
 function renderQuestionHTML(q){
   const headline=(q.conversational_text||q.text||"").trim();
-  let html = `<div style="font-size:18px;font-weight:600;margin:0 0 20px;color:#333">${headline}</div>`;
+  let html = `<div style="font-size:16px;font-weight:600;margin:0 0 12px;color:#333">${headline}</div>`;
 
   // Add clickable options
   if (q.options && Array.isArray(q.options)) {
-    html += `<div style="margin:20px 0">`;
+    html += `<div style="margin:12px 0;display:flex;flex-wrap:wrap;gap:6px">`;
     for (const option of q.options) {
       const optionIndex = option.index ?? option.option_index ?? 0;
       const optionText = option.text ?? option.option_text ?? "";
@@ -485,14 +486,14 @@ function renderQuestionHTML(q){
         <button onclick="(function(){
           var box=document.getElementById('box');
           if(box){ box.value='${optionIndex}'; document.getElementById('btn').click(); }
-        })()" style="display:block;width:100%;text-align:left;padding:12px 16px;margin:8px 0;border:2px solid #ddd;background:white;border-radius:8px;cursor:pointer;font-size:14px;transition:all 0.2s" onmouseover="this.style.borderColor='#0a7';this.style.backgroundColor='#f8fff8'" onmouseout="this.style.borderColor='#ddd';this.style.backgroundColor='white'">
+        })()" style="flex:1;min-width:calc(50% - 3px);text-align:left;padding:8px 12px;border:1px solid #ddd;background:white;border-radius:6px;cursor:pointer;font-size:13px;transition:all 0.2s" onmouseover="this.style.borderColor='#0a7';this.style.backgroundColor='#f8fff8'" onmouseout="this.style.borderColor='#ddd';this.style.backgroundColor='white'">
           ${optionText}
         </button>
       `;
     }
     html += `</div>`;
 
-    html += `<div style="text-align:center;color:#666;font-size:12px;margin-top:20px">
+    html += `<div style="text-align:center;color:#666;font-size:11px;margin-top:12px">
       Or type a number (${q.options.map(o => o.index ?? o.option_index ?? 0).join(', ')}) in the chat below
     </div>`;
   }
@@ -505,38 +506,75 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   const courses = Array.isArray(profile.matchedCourses) ? profile.matchedCourses : [];
   const dims = DIM_ORDER;
 
-  const lines = [];
-  lines.push(`You've completed the quiz!`);
-  if (total) lines.push(`Questions answered: ${total}`);
-  lines.push("");
+  let html = `<div style="font-size:16px;font-weight:bold;margin-bottom:15px;color:#0a7">🎉 You've completed the quiz!</div>`;
+  if (total) html += `<div style="font-size:14px;color:#666;margin-bottom:15px">Questions answered: ${total}</div>`;
 
-  if (courses.length) {
-    lines.push(`Matched Courses`);
-    for (const c of courses.slice(0, 8)) {
-      const name = (c.name || c.payload?.course_name || "Course");
-      const score = (typeof c.score === "number") ? ` – ${c.score.toFixed(3)}` : "";
-      const url = c.url || c.payload?.course_url || c.payload?.website || "";
-      if (url) {
-        const safe = String(url).replace(/"/g, '%22');
-        // Make the course name open the right-panel profile; include a small external visit link
-        lines.push(`• <a href="#" onclick="showCourseProfile('${safe}'); return false;">${name}</a>${score} <a href="${safe}" target="_blank" rel="noreferrer" style="font-size:12px;margin-left:6px">Visit</a>`);
-      } else {
-      lines.push(`• ${name}${score}`);
-      }
-    }
-    lines.push("");
-  }
-
+  // Add golfer profile spider diagram
   const haveAny = dims.some(k => typeof scores?.[k] === "number" && isFinite(scores[k]));
   if (haveAny) {
-    lines.push(`Your 10D Profile (0–10)`);
+    // Convert scores from 0-10 scale to 0-100 for spider diagram
+    const golferScores = {};
     for (const k of dims) {
-      const v = (typeof scores?.[k] === "number" && isFinite(scores[k])) ? scores[k].toFixed(2) : "—";
-      lines.push(`• ${k.replace(/_/g," ")}: ${v}`);
+      const v = scores?.[k];
+      if (typeof v === "number" && isFinite(v)) {
+        golferScores[k] = v * 10; // Convert from 0-10 to 0-100 scale
+      } else {
+        golferScores[k] = 0;
+      }
+    }
+    
+    html += `<div style="margin:15px 0;padding:12px;border:1px solid #ddd;border-radius:8px;background:#f9f9f9">`;
+    html += `<div style="font-size:14px;font-weight:bold;margin-bottom:8px;color:#0a7">Your Golf Profile</div>`;
+    html += generateSpiderDiagram(golferScores, "Your Profile");
+    html += `</div>`;
+  }
+
+  if (courses.length) {
+    html += `<div style="font-size:15px;font-weight:bold;margin:15px 0 10px;color:#333">Matched Courses</div>`;
+    
+    for (const c of courses.slice(0, 6)) { // Reduced to 6 to fit better with spider diagrams
+      const name = (c.name || c.payload?.course_name || "Course");
+      const matchScore = (typeof c.score === "number") ? Math.round(c.score * 100) : 0;
+      const url = c.url || c.payload?.course_url || c.payload?.website || "";
+      
+      // Extract course vector scores from payload
+      const payload = c.payload || {};
+      const courseScores = {
+        overall_difficulty: payload.playing_overall_difficulty || payload.overall_difficulty || 0,
+        strategic_variety: payload.playing_strategic_variety || payload.strategic_variety || 0,
+        penal_vs_playable: payload.playing_penal_vs_playable || payload.penal_vs_playable || 0,
+        physical_demands: payload.playing_physical_demands || payload.physical_demands || 0,
+        weather_adaptability: payload.playing_weather_adaptability || payload.weather_adaptability || 0,
+        conditions_quality: payload.experience_conditions_quality || payload.conditions_quality || 0,
+        facilities_amenities: payload.experience_facilities_amenities || payload.facilities_amenities || 0,
+        service_operations: payload.experience_service_operations || payload.service_operations || 0,
+        value_proposition: payload.experience_value_proposition || payload.value_proposition || 0,
+        aesthetic_appeal: payload.experience_aesthetic_appeal || payload.aesthetic_appeal || 0
+      };
+      
+      html += `<div style="margin:10px 0;padding:12px;border:1px solid #e0e0e0;border-radius:8px;background:white">`;
+      html += `<div style="font-weight:bold;color:#0a7;font-size:14px;margin-bottom:6px">${name}</div>`;
+      html += `<div style="font-size:12px;color:#666;margin-bottom:8px">Match Score: ${matchScore}%</div>`;
+      
+      // Add course spider diagram
+      html += `<div style="margin:8px 0">`;
+      html += `<div style="font-size:12px;font-weight:bold;margin-bottom:4px;color:#0a7">Course Profile</div>`;
+      html += generateSpiderDiagram(courseScores, name);
+      html += `</div>`;
+      
+      if (url) {
+        const safe = String(url).replace(/"/g, '%22');
+        html += `<div style="margin-top:8px">`;
+        html += `<a href="#" onclick="showCourseProfile('${safe}'); return false;" style="color:#0a7;text-decoration:none;margin-right:10px">📋 View Details</a>`;
+        html += `<a href="${safe}" target="_blank" rel="noreferrer" style="color:#0a7;text-decoration:none">🌐 Visit Website</a>`;
+        html += `</div>`;
+      }
+      
+      html += `</div>`;
     }
   }
 
-  return lines.join("\n");
+  return html;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -628,6 +666,130 @@ async function voyageRerank(query,hits,topN=40){
     return hits.map((h,i)=>({...h,_voy:byIdx.has(i)?byIdx.get(i):-1e9}))
                .sort((a,b)=>b._voy-a._voy).map(({_voy,...h})=>h);
   }catch{return hits;}
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Spider diagram generation
+ * ────────────────────────────────────────────────────────────────────────── */
+function generateSpiderDiagram(scores, courseName, overlayScores = null, overlayName = null) {
+  const dimensions = [
+    { key: 'overall_difficulty', label: 'Overall Difficulty' },
+    { key: 'strategic_variety', label: 'Strategic Variety' },
+    { key: 'penal_vs_playable', label: 'Penal vs Playable' },
+    { key: 'physical_demands', label: 'Physical Demands' },
+    { key: 'weather_adaptability', label: 'Weather Adaptability' },
+    { key: 'conditions_quality', label: 'Conditions Quality' },
+    { key: 'facilities_amenities', label: 'Facilities & Amenities' },
+    { key: 'service_operations', label: 'Service & Operations' },
+    { key: 'value_proposition', label: 'Value Proposition' },
+    { key: 'aesthetic_appeal', label: 'Aesthetic Appeal' }
+  ];
+  
+  const centerX = 150;
+  const centerY = 150;
+  const radius = 120;
+  const numDimensions = dimensions.length;
+  
+  // Generate SVG path for the spider web
+  let webPath = '';
+  let labels = '';
+  let dataPath = '';
+  let overlayPath = '';
+  let legend = '';
+  
+  // Create web grid
+  for (let i = 0; i < numDimensions; i++) {
+    const angle = (i * 2 * Math.PI) / numDimensions - Math.PI / 2;
+    const x = centerX + radius * Math.cos(angle);
+    const y = centerY + radius * Math.sin(angle);
+    
+    // Web lines from center to edge
+    webPath += `<line x1="${centerX}" y1="${centerY}" x2="${x}" y2="${y}" stroke="#ddd" stroke-width="1"/>`;
+    
+    // Dimension labels
+    const labelX = centerX + (radius + 20) * Math.cos(angle);
+    const labelY = centerY + (radius + 20) * Math.sin(angle);
+    labels += `<text x="${labelX}" y="${labelY}" text-anchor="middle" font-size="10" fill="#666">${dimensions[i].label}</text>`;
+  }
+  
+  // Create concentric circles
+  for (let r = 20; r <= radius; r += 20) {
+    webPath += `<circle cx="${centerX}" cy="${centerY}" r="${r}" fill="none" stroke="#eee" stroke-width="1"/>`;
+  }
+  
+  // Generate main course data points
+  const dataPoints = dimensions.map((dim, i) => {
+    const angle = (i * 2 * Math.PI) / numDimensions - Math.PI / 2;
+    const value = scores[dim.key] || 0;
+    const normalizedValue = Math.min(value / 100, 1); // Normalize to 0-1
+    const x = centerX + radius * normalizedValue * Math.cos(angle);
+    const y = centerY + radius * normalizedValue * Math.sin(angle);
+    return { x, y, value: Math.round(value) };
+  });
+  
+  // Create main data path
+  if (dataPoints.length > 0) {
+    const pathData = dataPoints.map((point, i) => 
+      i === 0 ? `M ${point.x} ${point.y}` : `L ${point.x} ${point.y}`
+    ).join(' ') + ' Z';
+    dataPath = `<path d="${pathData}" fill="rgba(10, 119, 0, 0.2)" stroke="#0a7" stroke-width="2"/>`;
+    
+    // Add main data points
+    dataPoints.forEach(point => {
+      dataPath += `<circle cx="${point.x}" cy="${point.y}" r="3" fill="#0a7"/>`;
+      dataPath += `<text x="${point.x}" y="${point.y - 8}" text-anchor="middle" font-size="8" fill="#0a7">${point.value}</text>`;
+    });
+  }
+  
+  // Generate overlay data points (target course)
+  if (overlayScores) {
+    const overlayDataPoints = dimensions.map((dim, i) => {
+      const angle = (i * 2 * Math.PI) / numDimensions - Math.PI / 2;
+      const value = overlayScores[dim.key] || 0;
+      const normalizedValue = Math.min(value / 100, 1);
+      const x = centerX + radius * normalizedValue * Math.cos(angle);
+      const y = centerY + radius * normalizedValue * Math.sin(angle);
+      return { x, y, value: Math.round(value) };
+    });
+    
+    if (overlayDataPoints.length > 0) {
+      const overlayPathData = overlayDataPoints.map((point, i) => 
+        i === 0 ? `M ${point.x} ${point.y}` : `L ${point.x} ${point.y}`
+      ).join(' ') + ' Z';
+      overlayPath = `<path d="${overlayPathData}" fill="rgba(255, 0, 0, 0.1)" stroke="#ff0000" stroke-width="2" stroke-dasharray="5,5"/>`;
+      
+      overlayDataPoints.forEach(point => {
+        overlayPath += `<circle cx="${point.x}" cy="${point.y}" r="2" fill="#ff0000"/>`;
+        overlayPath += `<text x="${point.x}" y="${point.y + 12}" text-anchor="middle" font-size="7" fill="#ff0000">${point.value}</text>`;
+      });
+    }
+    
+    // Add legend
+    legend = `
+      <div style="display:flex;justify-content:center;gap:15px;margin-top:8px;font-size:10px">
+        <div style="display:flex;align-items:center;gap:4px">
+          <div style="width:12px;height:2px;background:#0a7"></div>
+          <span>${courseName}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <div style="width:12px;height:2px;background:#ff0000;border-top:1px dashed #ff0000"></div>
+          <span>${overlayName || 'Target Course'}</span>
+        </div>
+      </div>
+    `;
+  }
+  
+  return `
+    <div style="text-align:center;margin:10px 0">
+      <svg width="300" height="300" style="border:1px solid #eee;border-radius:8px;background:white">
+        ${webPath}
+        ${dataPath}
+        ${overlayPath}
+        ${labels}
+      </svg>
+      ${legend}
+    </div>
+  `;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1034,6 +1196,153 @@ router.post("/chat", async (req, res) => {
           }
         });
       }
+
+      // Handle similar courses request
+      if (intent.intent === "similar_courses" && intent.confidence > 0.7) {
+        try {
+        // Extract radius first, then course name
+        const radiusMatch = lastUser.match(/(?:with|within)\s+(\d+)\s*(?:miles?|mi)/i);
+        const radius = radiusMatch ? radiusMatch[1] : null;
+        
+        // Extract course name, removing radius text if present
+        let courseNameText = lastUser;
+        if (radiusMatch) {
+          courseNameText = lastUser.replace(radiusMatch[0], '').trim();
+        }
+        
+        const courseNameMatch = courseNameText.match(/(?:similar to|like|courses like|show me courses similar to|show my similar courses to)\s+(.+?)(?:\?|$)/i);
+        if (!courseNameMatch) {
+          return res.json({
+            html: `I'd be happy to find courses similar to one you like! Please specify a course name, like "show me courses similar to Pebble Beach" or "courses like Augusta National".`
+          });
+        }
+
+        const courseName = courseNameMatch[1].trim().replace(/[?!.,;]+$/, '');
+          
+          // Call the similar courses API
+          const apiUrl = new URL(`http://localhost:${process.env.PORT || 8080}/api/courses/similar/${encodeURIComponent(courseName)}`);
+          if (radius) {
+            apiUrl.searchParams.set('radius', radius);
+          }
+          
+          const response = await fetch(apiUrl.toString());
+          const data = await response.json();
+          
+          if (!response.ok) {
+            return res.json({
+              html: `Sorry, I couldn't find a course named "${courseName}". Please check the spelling and try again.`
+            });
+          }
+
+          const { targetCourse, similarCourses } = data;
+          
+          if (!similarCourses || similarCourses.length === 0) {
+            return res.json({
+              html: `I found "${targetCourse.name}" but couldn't find any similar courses in the database.`
+            });
+          }
+
+          // Format the response with vector scores and explanations
+          const radiusText = radius ? ` within ${radius} miles` : '';
+          let html = `<div style="font-size:15px;margin:0 0 10px"><strong>Courses similar to "${targetCourse.name}"${radiusText}:</strong></div>`;
+          
+          // Get target course scores for comparison (convert from 0-10 to 0-100 range for spider diagram)
+          const targetScores = {
+            overall_difficulty: (targetCourse.scores?.overall_difficulty || 0) * 10,
+            strategic_variety: (targetCourse.scores?.strategic_variety || 0) * 10,
+            penal_vs_playable: (targetCourse.scores?.penal_vs_playable || 0) * 10,
+            physical_demands: (targetCourse.scores?.physical_demands || 0) * 10,
+            weather_adaptability: (targetCourse.scores?.weather_adaptability || 0) * 10,
+            conditions_quality: (targetCourse.scores?.conditions_quality || 0) * 10,
+            facilities_amenities: (targetCourse.scores?.facilities_amenities || 0) * 10,
+            service_operations: (targetCourse.scores?.service_operations || 0) * 10,
+            value_proposition: (targetCourse.scores?.value_proposition || 0) * 10,
+            aesthetic_appeal: (targetCourse.scores?.aesthetic_appeal || 0) * 10
+          };
+          
+          // Add spider diagram for target course
+          html += `<div style="margin:8px 0;padding:12px;border:1px solid #ddd;border-radius:8px;background:#f9f9f9">`;
+          html += `<div style="font-size:14px;font-weight:bold;margin-bottom:8px;color:#0a7">Vector Profile: ${targetCourse.name}</div>`;
+          html += generateSpiderDiagram(targetScores, targetCourse.name);
+          html += `</div>`;
+          
+          // Create a single box containing all courses
+          html += `<div style="margin:8px 0;padding:12px;border:1px solid #ddd;border-radius:8px;background:#f9f9f9">`;
+          
+          similarCourses.slice(0, 8).forEach((course, index) => {
+            const similarity = Math.round(course.score * 100);
+            
+            // Extract vector scores from course payload
+            const payload = course.payload || {};
+            const vectorScores = {
+              overall_difficulty: payload.playing_overall_difficulty || payload.overall_difficulty || 0,
+              strategic_variety: payload.playing_strategic_variety || payload.strategic_variety || 0,
+              penal_vs_playable: payload.playing_penal_vs_playable || payload.penal_vs_playable || 0,
+              physical_demands: payload.playing_physical_demands || payload.physical_demands || 0,
+              weather_adaptability: payload.playing_weather_adaptability || payload.weather_adaptability || 0,
+              conditions_quality: payload.experience_conditions_quality || payload.conditions_quality || 0,
+              facilities_amenities: payload.experience_facilities_amenities || payload.facilities_amenities || 0,
+              service_operations: payload.experience_service_operations || payload.service_operations || 0,
+              value_proposition: payload.experience_value_proposition || payload.value_proposition || 0,
+              aesthetic_appeal: payload.experience_aesthetic_appeal || payload.aesthetic_appeal || 0
+            };
+            
+            // Find top 3 matching dimensions
+            const dimensionMatches = Object.keys(vectorScores).map(dim => ({
+              dimension: dim,
+              target: targetScores[dim],
+              course: vectorScores[dim],
+              diff: Math.abs(targetScores[dim] - vectorScores[dim])
+            })).sort((a, b) => a.diff - b.diff).slice(0, 3);
+            
+            const explanation = dimensionMatches.map(match => {
+              const dimName = match.dimension.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+              return `${dimName} (${Math.round(match.course)}/100)`;
+            }).join(', ');
+            
+            html += `
+              <div style="margin:8px 0;padding:8px;border:1px solid #e0e0e0;border-radius:6px;background:white">
+                <div style="font-weight:bold;color:#0a7;font-size:14px;margin-bottom:4px">${course.name}</div>
+                <div style="font-size:12px;color:#666;margin-bottom:6px">Similarity: ${similarity}%</div>
+                <div style="font-size:11px;color:#555;margin-bottom:4px"><strong>Key similarities:</strong> ${explanation}</div>
+                
+                <!-- Spider diagram for this course -->
+                <div style="margin:8px 0">
+                  <div style="font-size:12px;font-weight:bold;margin-bottom:4px;color:#0a7">Vector Profile</div>
+                  ${generateSpiderDiagram(vectorScores, course.name, targetScores, targetCourse.name)}
+                </div>
+                
+                <div style="font-size:10px;color:#777;margin-bottom:4px">
+                  <strong>Vector scores (Target vs Course):</strong><br/>
+                  Overall Difficulty: ${Math.round(targetScores.overall_difficulty)} vs ${Math.round(vectorScores.overall_difficulty)} | 
+                  Strategic Variety: ${Math.round(targetScores.strategic_variety)} vs ${Math.round(vectorScores.strategic_variety)} | 
+                  Penal vs Playable: ${Math.round(targetScores.penal_vs_playable)} vs ${Math.round(vectorScores.penal_vs_playable)} | 
+                  Physical Demands: ${Math.round(targetScores.physical_demands)} vs ${Math.round(vectorScores.physical_demands)} | 
+                  Weather Adaptability: ${Math.round(targetScores.weather_adaptability)} vs ${Math.round(vectorScores.weather_adaptability)}
+                </div>
+                <div style="font-size:10px;color:#777">
+                  <strong>Experience factors (Target vs Course):</strong><br/>
+                  Conditions Quality: ${Math.round(targetScores.conditions_quality)} vs ${Math.round(vectorScores.conditions_quality)} | 
+                  Facilities: ${Math.round(targetScores.facilities_amenities)} vs ${Math.round(vectorScores.facilities_amenities)} | 
+                  Service: ${Math.round(targetScores.service_operations)} vs ${Math.round(vectorScores.service_operations)} | 
+                  Value: ${Math.round(targetScores.value_proposition)} vs ${Math.round(vectorScores.value_proposition)} | 
+                  Aesthetic: ${Math.round(targetScores.aesthetic_appeal)} vs ${Math.round(vectorScores.aesthetic_appeal)}
+                </div>
+                ${course.url ? `<div style="font-size:11px;margin-top:4px"><a href="${course.url}" target="_blank" style="color:#0a7">Visit Website</a></div>` : ''}
+              </div>
+            `;
+          });
+          
+          html += `</div>`;
+
+          return res.json({ html });
+        } catch (error) {
+          console.error("Similar courses error:", error);
+          return res.json({
+            html: `Sorry, I encountered an error while searching for similar courses. Please try again.`
+          });
+        }
+      }
     }
 
     // Handle quiz start from pending suggestion
@@ -1136,6 +1445,7 @@ router.post("/chat", async (req, res) => {
         return res.json({ html:"Sorry, I couldn't start the quiz right now." });
       }
     }
+
 
     // Handle "no" response to quiz suggestion - do regular course search
     if (state.pendingQuizSuggestion && (lastUser.toLowerCase() === 'no' || lastUser.toLowerCase() === 'n')) {
@@ -1485,7 +1795,7 @@ ${courseNames.map(name => `- ${name}`).join('\n')}` : '';
 
         if (apiAns.complete){
           state.mode=null; state.question=null; SESS.set(sid,state);
-          const html = renderFinalProfileHTML(apiAns.profile, apiAns.scores ?? state.scores, apiAns.totalQuestions ?? 0).replace(/\n/g,"<br/>");
+          const html = renderFinalProfileHTML(apiAns.profile, apiAns.scores ?? state.scores, apiAns.totalQuestions ?? 0);
           return res.json({ html });
         }
         if (state.question){ 
@@ -1569,7 +1879,7 @@ ${courseNames.map(name => `- ${name}`).join('\n')}` : '';
 
         if (ftAns.complete){
           state.mode=null; state.question=null; SESS.set(sid,state);
-          const html = renderFinalProfileHTML(ftAns.profile, ftAns.scores ?? state.scores, ftAns.totalQuestions ?? 0).replace(/\n/g,"<br/>");
+          const html = renderFinalProfileHTML(ftAns.profile, ftAns.scores ?? state.scores, ftAns.totalQuestions ?? 0);
           return res.json({ html });
         }
         if (state.question){ 

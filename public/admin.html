@@ -5,22 +5,313 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ML Admin Console - Golf Course Chatbot</title>
     <style>
-        body {
+        * {
             margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
             background-color: #f9fafb;
-            padding: 20px;
+            min-height: 100vh;
         }
-        
-        .container {
+
+        .header {
+            background-color: #ffffff;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .header-content {
             max-width: 1200px;
             margin: 0 auto;
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 24px;
         }
-        
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #111827;
+            margin-bottom: 4px;
+        }
+
+        .header p {
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        .nav {
+            background-color: #ffffff;
+            border-bottom: 1px solid #e5e7eb;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .nav-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 32px;
+        }
+
+        .nav-tab {
+            padding: 16px 0;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #6b7280;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .nav-tab.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+
+        .main-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 32px 24px;
+        }
+
+        .loading {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #f9fafb;
+        }
+
+        .loading-content {
+            text-align: center;
+        }
+
+        .loading-icon {
+            font-size: 48px;
+            margin: 0 auto 16px;
+            color: #9ca3af;
+        }
+
+        .loading-text {
+            color: #6b7280;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .header-buttons {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background-color: #3b82f6;
+            color: #ffffff;
+        }
+
+        .btn-secondary {
+            background-color: #ffffff;
+            border: 1px solid #d1d5db;
+            color: #374151;
+        }
+
+        .btn-success {
+            background-color: #ffffff;
+            border: 1px solid #d1d5db;
+            color: #374151;
+        }
+
+        .search-filter-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .search-container {
+            flex: 1;
+            position: relative;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 12px;
+            top: 10px;
+            color: #9ca3af;
+            font-size: 18px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 8px 12px 8px 40px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .filter-select {
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            background-color: #ffffff;
+        }
+
+        .question-count {
+            display: flex;
+            align-items: center;
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        .form-container {
+            background-color: #ffffff;
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .form-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .form-field {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-label {
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .form-input, .form-select {
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .options-section {
+            margin-bottom: 20px;
+        }
+
+        .options-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .option-item {
+            background-color: #f9fafb;
+            padding: 16px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+
+        .option-header {
+            display: grid;
+            grid-template-columns: 2fr 1fr auto;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .option-input {
+            padding: 6px 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .remove-option-btn {
+            padding: 6px 12px;
+            background-color: #fee2e2;
+            color: #dc2626;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .scores-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+        }
+
+        .score-field {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .score-label {
+            font-size: 11px;
+            color: #6b7280;
+        }
+
+        .score-input {
+            width: 100%;
+            padding: 4px 6px;
+            border: 1px solid #d1d5db;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .add-option-btn {
+            padding: 8px 12px;
+            background-color: #f3f4f6;
+            border: 1px dashed #9ca3af;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
         .question-item {
             background-color: #ffffff;
             border: 1px solid #e5e7eb;
@@ -28,216 +319,1033 @@
             padding: 16px;
             margin-bottom: 12px;
         }
-        
+
         .question-header {
             display: flex;
             justify-content: space-between;
             align-items: start;
         }
-        
+
         .question-content {
             flex: 1;
         }
-        
+
+        .question-badges {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .badge-type {
+            background-color: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge-priority {
+            background-color: #f3f4f6;
+            color: #4b5563;
+        }
+
         .question-title {
             font-size: 16px;
             font-weight: 500;
             color: #111827;
             margin-bottom: 8px;
         }
-        
+
         .question-stats {
             display: flex;
             gap: 12px;
             font-size: 12px;
             color: #6b7280;
         }
-        
-        .action-button {
+
+        .question-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .action-btn {
             padding: 6px;
             background: transparent;
             border: none;
             cursor: pointer;
             color: #6b7280;
-            font-size: 16px;
+            font-size: 18px;
         }
-        
-        .action-button:hover {
+
+        .action-btn:hover {
             color: #3b82f6;
         }
-        
-        .edit-form {
-            background-color: #ffffff;
-            border: 3px solid #ff0000;
-            border-radius: 8px;
-            padding: 24px;
-            margin-bottom: 24px;
+
+        .action-btn.delete:hover {
+            color: #ef4444;
         }
-        
+
+        .question-details {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .option-display {
+            background-color: #f9fafb;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+
+        .option-content {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .option-emoji {
+            font-size: 20px;
+        }
+
+        .option-text {
+            font-weight: 500;
+        }
+
+        .option-scores {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .score-badge {
+            padding: 2px 6px;
+            background-color: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .empty-icon {
+            font-size: 32px;
+            margin: 0 auto 12px;
+            color: #9ca3af;
+        }
+
+        .empty-text {
+            color: #6b7280;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #6b7280;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .algorithm-card {
+            background-color: #ffffff;
+            padding: 24px;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+            margin-bottom: 16px;
+        }
+
+        .algorithm-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 20px;
+        }
+
+        .algorithm-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .algorithm-description {
+            font-size: 14px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+
+        .version-badge {
+            padding: 4px 12px;
+            background-color: #dcfce7;
+            color: #166534;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .config-section {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .config-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 12px;
+        }
+
+        .config-content {
+            background-color: #f9fafb;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: monospace;
+        }
+
+        .config-item {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
         .hidden {
             display: none;
         }
-        
-        .loading {
+
+        .weight-editor {
+            background-color: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .weight-editor h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #111827;
+            margin-bottom: 16px;
+        }
+
+        .weight-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .weight-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .weight-label {
+            font-size: 12px;
+            color: #374151;
+            min-width: 120px;
+            text-align: right;
+        }
+
+        .weight-input {
+            width: 80px;
+            padding: 4px 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 12px;
             text-align: center;
-            padding: 48px;
-            color: #6b7280;
+        }
+
+        .weight-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .editing {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 1px #3b82f6;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>ML Admin Console</h1>
-        <p>Manage questions and view algorithm configurations</p>
-        
-        <div style="margin-bottom: 24px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <h2 style="font-size: 20px; font-weight: 600; color: #111827;">Question Bank</h2>
-                <button 
-                    id="addQuestionBtn"
-                    style="padding: 8px 16px; background-color: #3b82f6; border: none; border-radius: 6px; font-size: 14px; color: #ffffff; cursor: pointer;"
-                >
-                    ➕ Add Question
-                </button>
+    <div class="header">
+        <div class="header-content">
+            <h1>ML Admin Console</h1>
+            <p>Manage questions and view algorithm configurations</p>
+        </div>
+    </div>
+
+    <div class="nav">
+        <div class="nav-content">
+            <nav class="nav-tabs">
+                <button class="nav-tab active" data-tab="questions">Questions</button>
+                <button class="nav-tab" data-tab="algorithms">Algorithms</button>
+            </nav>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <!-- Loading State -->
+        <div id="loadingState" class="loading">
+            <div class="loading-content">
+                <div class="loading-icon">⏳</div>
+                <p class="loading-text">Loading...</p>
             </div>
         </div>
 
-        <div id="editForm" class="edit-form hidden">
-            <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 20px;">Edit Question</h3>
-            <p style="color: red; font-size: 20px; font-weight: bold;">
-                FORM IS WORKING! This is a test form.
-            </p>
-            <div style="margin-top: 20px;">
-                <button 
-                    id="closeFormBtn"
-                    style="padding: 8px 20px; background-color: #6b7280; color: #ffffff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer;"
-                >
-                    Close
-                </button>
+        <!-- Questions Tab -->
+        <div id="questionsTab" class="tab-content hidden">
+            <div class="section-header">
+                <h2 class="section-title">Question Bank</h2>
+                <div class="header-buttons">
+                    <button id="exportBtn" class="btn btn-success">
+                        📤 Export
+                    </button>
+                    <button id="addQuestionBtn" class="btn btn-primary">
+                        ➕ Add Question
+                    </button>
+                </div>
+            </div>
+
+            <div class="search-filter-bar">
+                <div class="search-container">
+                    <span class="search-icon">🔍</span>
+                    <input 
+                        type="text" 
+                        id="searchInput" 
+                        class="search-input" 
+                        placeholder="Search questions..."
+                    />
+                </div>
+                <select id="filterSelect" class="filter-select">
+                    <option value="all">All Types</option>
+                </select>
+                <div class="question-count">
+                    <span id="questionCount">0 questions</span>
+                </div>
+            </div>
+
+            <!-- Add/Edit Form -->
+            <div id="questionForm" class="form-container hidden">
+                <h3 id="formTitle" class="form-title">Create New Question</h3>
+                
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label class="form-label">ID</label>
+                        <input type="text" id="questionId" class="form-input" />
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label">Type</label>
+                        <select id="questionType" class="form-select">
+                        </select>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label">Priority (1-10)</label>
+                        <input type="number" id="questionPriority" class="form-input" min="1" max="10" />
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label">Question</label>
+                        <input type="text" id="questionText" class="form-input" />
+                    </div>
+                </div>
+
+                <div class="options-section">
+                    <h4 class="options-title">Answer Options</h4>
+                    <div id="optionsContainer">
+                        <!-- Options will be dynamically added here -->
+                    </div>
+                    <button id="addOptionBtn" class="add-option-btn">+ Add Option</button>
+                </div>
+
+                <div class="form-actions">
+                    <button id="cancelBtn" class="btn btn-secondary">Cancel</button>
+                    <button id="saveBtn" class="btn btn-primary">Save</button>
+                </div>
+            </div>
+
+            <!-- Questions List -->
+            <div id="questionsList">
+                <!-- Questions will be dynamically added here -->
             </div>
         </div>
 
-        <div id="questionsList">
-            <div class="loading">
-                <div style="font-size: 32px; margin: 0 auto 12px; color: #9ca3af;">⏳</div>
-                <p>Loading questions...</p>
+        <!-- Algorithms Tab -->
+        <div id="algorithmsTab" class="tab-content hidden">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <p class="stat-label">Total Profiles</p>
+                    <p id="totalProfiles" class="stat-value">0</p>
+                </div>
+                <div class="stat-card">
+                    <p class="stat-label">Active Algorithms</p>
+                    <p id="activeAlgorithms" class="stat-value">0</p>
+                </div>
+            </div>
+
+            <h2 class="section-title">Active Algorithms</h2>
+            
+            <!-- Weight Editor -->
+            <div id="weightEditor" class="weight-editor hidden">
+                <h4>Edit Algorithm Weights</h4>
+                <div class="weight-grid" id="dimensionWeightsGrid">
+                    <!-- Dimension weights will be dynamically added here -->
+                </div>
+                <div class="weight-actions">
+                    <button id="saveWeightsBtn" class="btn btn-primary btn-small">Save Weights</button>
+                    <button id="cancelWeightsBtn" class="btn btn-secondary btn-small">Cancel</button>
+                </div>
+            </div>
+            
+            <div id="algorithmsList">
+                <!-- Algorithm cards will be dynamically added here -->
             </div>
         </div>
     </div>
 
     <script>
+        // Global state
         let questions = [];
+        let questionTypes = [];
+        let scoreDimensions = [];
         let currentEditingQuestion = null;
+        let isEditing = false;
+        let currentAlgorithmWeights = {};
+        let globalStatsData = null;
 
-        // Load questions from API
-        async function loadQuestions() {
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadInitialData();
+            setupEventListeners();
+            showTab('questions');
+        });
+
+        // Load initial data
+        async function loadInitialData() {
             try {
-                const response = await fetch('/api/admin/questions');
-                const data = await response.json();
-                
-                if (data.error) {
-                    console.error('Error fetching questions:', data.error);
-                    questions = [];
+                // Load questions
+                const questionsResponse = await fetch('/api/admin/questions');
+                const questionsData = await questionsResponse.json();
+                questions = questionsData.questions || [];
+
+                // Load question types
+                const typesResponse = await fetch('/api/admin/question-types');
+                const typesData = await typesResponse.json();
+                questionTypes = typesData.types || [];
+
+
+                // Load admin stats
+                const statsResponse = await fetch('/api/admin/stats');
+                const statsData = await statsResponse.json();
+                globalStatsData = statsData; // Store in global variable
+
+                // Determine score dimensions from the scoring algorithm configuration
+                if (statsData.scoringConfig?.dimension_weights) {
+                    scoreDimensions = Object.keys(statsData.scoringConfig.dimension_weights);
                 } else {
-                    questions = data.questions || [];
+                    // Fallback: determine from first question with scores
+                    if (questions.length > 0) {
+                        const firstQuestionWithScores = questions.find(q => 
+                            q.options?.some(opt => opt.scores && Object.keys(opt.scores).length > 0)
+                        );
+                        if (firstQuestionWithScores) {
+                            scoreDimensions = Object.keys(firstQuestionWithScores.options[0].scores || {});
+                        }
+                    }
                 }
                 
+                document.getElementById('totalProfiles').textContent = statsData.totalProfiles || 0;
+                document.getElementById('activeAlgorithms').textContent = statsData.activeAlgorithms || 0;
+
+                // Populate question types dropdown
+                populateQuestionTypes();
+                
+                // Render questions
                 renderQuestions();
+                
+                // Render algorithms
+                renderAlgorithms(statsData);
+
+                // Hide loading state
+                document.getElementById('loadingState').classList.add('hidden');
             } catch (error) {
-                console.error('Error fetching questions:', error);
-                questions = [];
-                renderQuestions();
+                console.error('Error loading initial data:', error);
+                document.getElementById('loadingState').classList.add('hidden');
             }
         }
 
-        // Render questions list
+        // Setup event listeners
+        function setupEventListeners() {
+            // Tab navigation
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const tabName = tab.dataset.tab;
+                    showTab(tabName);
+                });
+            });
+
+            // Search and filter
+            document.getElementById('searchInput').addEventListener('input', renderQuestions);
+            document.getElementById('filterSelect').addEventListener('change', renderQuestions);
+
+            // Form actions
+            document.getElementById('addQuestionBtn').addEventListener('click', showAddForm);
+            document.getElementById('exportBtn').addEventListener('click', exportQuestions);
+            document.getElementById('saveBtn').addEventListener('click', saveQuestion);
+            document.getElementById('cancelBtn').addEventListener('click', hideForm);
+            document.getElementById('addOptionBtn').addEventListener('click', addOption);
+
+            // Weight editing actions
+            document.getElementById('saveWeightsBtn').addEventListener('click', saveWeights);
+            document.getElementById('cancelWeightsBtn').addEventListener('click', hideWeightEditor);
+        }
+
+        // Show tab
+        function showTab(tabName) {
+            // Update nav tabs
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+
+            // Show/hide tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            document.getElementById(`${tabName}Tab`).classList.remove('hidden');
+        }
+
+        // Populate question types dropdown
+        function populateQuestionTypes() {
+            const select = document.getElementById('questionType');
+            select.innerHTML = '';
+            questionTypes.forEach(type => {
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type;
+                select.appendChild(option);
+            });
+
+            // Also populate filter dropdown
+            const filterSelect = document.getElementById('filterSelect');
+            filterSelect.innerHTML = '<option value="all">All Types</option>';
+            questionTypes.forEach(type => {
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type;
+                filterSelect.appendChild(option);
+            });
+        }
+
+        // Show add form
+        function showAddForm() {
+            isEditing = false;
+            currentEditingQuestion = null;
+            
+            document.getElementById('formTitle').textContent = 'Create New Question';
+            document.getElementById('questionId').value = '';
+            document.getElementById('questionType').value = questionTypes[0] || '';
+            document.getElementById('questionPriority').value = 5;
+            document.getElementById('questionText').value = '';
+            
+            // Initialize with 4 empty options
+            const options = Array(4).fill().map(() => ({ text: '', image: '', scores: {} }));
+            renderOptions(options);
+            
+            document.getElementById('questionForm').classList.remove('hidden');
+        }
+
+        // Show edit form
+        function showEditForm(question) {
+            isEditing = true;
+            currentEditingQuestion = question;
+            
+            document.getElementById('formTitle').textContent = 'Edit Question';
+            document.getElementById('questionId').value = question.id;
+            document.getElementById('questionType').value = question.type;
+            document.getElementById('questionPriority').value = question.priority;
+            document.getElementById('questionText').value = question.question;
+            
+            renderOptions(question.options);
+            document.getElementById('questionForm').classList.remove('hidden');
+        }
+
+        // Hide form
+        function hideForm() {
+            document.getElementById('questionForm').classList.add('hidden');
+            currentEditingQuestion = null;
+            isEditing = false;
+        }
+
+        // Render options
+        function renderOptions(options) {
+            const container = document.getElementById('optionsContainer');
+            container.innerHTML = '';
+            
+            options.forEach((option, index) => {
+                const optionDiv = document.createElement('div');
+                optionDiv.className = 'option-item';
+                optionDiv.innerHTML = `
+                    <div class="option-header">
+                        <input type="text" class="option-input" placeholder="Answer text" 
+                               value="${option.text || ''}" data-field="text" data-index="${index}">
+                        <input type="text" class="option-input" placeholder="Emoji" 
+                               value="${option.image || ''}" data-field="image" data-index="${index}">
+                        <button class="remove-option-btn" onclick="removeOption(${index})">Remove</button>
+                    </div>
+                    <div class="scores-grid">
+                        ${scoreDimensions.map(dim => `
+                            <div class="score-field">
+                                <label class="score-label">${dim}</label>
+                                <input type="${dim === 'courseStyle' ? 'text' : 'number'}" 
+                                       class="score-input" 
+                                       placeholder="${dim === 'courseStyle' ? 'style' : '0-10'}"
+                                       min="${dim === 'genderLean' ? -5 : 0}"
+                                       max="${dim === 'genderLean' ? 5 : 10}"
+                                       value="${option.scores?.[dim] || ''}"
+                                       data-dimension="${dim}" data-index="${index}">
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                container.appendChild(optionDiv);
+            });
+
+            // Add event listeners for option inputs
+            container.querySelectorAll('input[data-field]').forEach(input => {
+                input.addEventListener('input', updateOption);
+            });
+            container.querySelectorAll('input[data-dimension]').forEach(input => {
+                input.addEventListener('input', updateOptionScore);
+            });
+        }
+
+        // Add option
+        function addOption() {
+            const container = document.getElementById('optionsContainer');
+            const optionDiv = document.createElement('div');
+            optionDiv.className = 'option-item';
+            const newIndex = container.children.length;
+            
+            optionDiv.innerHTML = `
+                <div class="option-header">
+                    <input type="text" class="option-input" placeholder="Answer text" 
+                           data-field="text" data-index="${newIndex}">
+                    <input type="text" class="option-input" placeholder="Emoji" 
+                           data-field="image" data-index="${newIndex}">
+                    <button class="remove-option-btn" onclick="removeOption(${newIndex})">Remove</button>
+                </div>
+                <div class="scores-grid">
+                    ${scoreDimensions.map(dim => `
+                        <div class="score-field">
+                            <label class="score-label">${dim}</label>
+                            <input type="${dim === 'courseStyle' ? 'text' : 'number'}" 
+                                   class="score-input" 
+                                   placeholder="${dim === 'courseStyle' ? 'style' : '0-10'}"
+                                   min="${dim === 'genderLean' ? -5 : 0}"
+                                   max="${dim === 'genderLean' ? 5 : 10}"
+                                   data-dimension="${dim}" data-index="${newIndex}">
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            container.appendChild(optionDiv);
+
+            // Add event listeners
+            optionDiv.querySelectorAll('input[data-field]').forEach(input => {
+                input.addEventListener('input', updateOption);
+            });
+            optionDiv.querySelectorAll('input[data-dimension]').forEach(input => {
+                input.addEventListener('input', updateOptionScore);
+            });
+        }
+
+        // Remove option
+        function removeOption(index) {
+            const container = document.getElementById('optionsContainer');
+            if (container.children.length > 1) {
+                container.children[index].remove();
+                // Re-index remaining options
+                container.querySelectorAll('.option-item').forEach((item, newIndex) => {
+                    item.querySelectorAll('input').forEach(input => {
+                        input.dataset.index = newIndex;
+                    });
+                    item.querySelector('.remove-option-btn').setAttribute('onclick', `removeOption(${newIndex})`);
+                });
+            }
+        }
+
+        // Update option
+        function updateOption(event) {
+            // This will be handled by the save function
+        }
+
+        // Update option score
+        function updateOptionScore(event) {
+            // This will be handled by the save function
+        }
+
+        // Save question
+        async function saveQuestion() {
+            const questionId = document.getElementById('questionId').value;
+            const questionType = document.getElementById('questionType').value;
+            const questionPriority = parseInt(document.getElementById('questionPriority').value);
+            const questionText = document.getElementById('questionText').value;
+
+            if (!questionText || !questionId) {
+                alert('Please provide both a question ID and question text');
+                return;
+            }
+
+            // Collect options
+            const options = [];
+            const optionItems = document.querySelectorAll('.option-item');
+            
+            optionItems.forEach((item, index) => {
+                const textInput = item.querySelector('input[data-field="text"]');
+                const imageInput = item.querySelector('input[data-field="image"]');
+                const text = textInput.value.trim();
+                
+                if (text) {
+                    const scores = {};
+                    item.querySelectorAll('input[data-dimension]').forEach(scoreInput => {
+                        const dimension = scoreInput.dataset.dimension;
+                        const value = scoreInput.value;
+                        if (value) {
+                            scores[dimension] = dimension === 'courseStyle' ? value : parseInt(value);
+                        }
+                    });
+                    
+                    options.push({
+                        text: text,
+                        image: imageInput.value.trim(),
+                        scores: scores
+                    });
+                }
+            });
+
+            if (options.length < 2) {
+                alert('Please provide at least 2 answer options');
+                return;
+            }
+
+            try {
+                const questionData = {
+                    id: questionId,
+                    type: questionType,
+                    priority: questionPriority,
+                    question: questionText,
+                    options: options
+                };
+
+                let response;
+                if (isEditing) {
+                    response = await fetch(`/api/admin/questions/${questionId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(questionData)
+                    });
+                } else {
+                    response = await fetch('/api/admin/questions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(questionData)
+                    });
+                }
+
+                const result = await response.json();
+                
+                if (result.error) {
+                    alert('Failed to save question: ' + result.error);
+                } else {
+                    alert(`Question ${isEditing ? 'updated' : 'created'} successfully!`);
+                    hideForm();
+                    await loadInitialData(); // Reload data
+                }
+            } catch (error) {
+                console.error('Error saving question:', error);
+                alert('Failed to save question: ' + error.message);
+            }
+        }
+
+        // Delete question
+        async function deleteQuestion(questionId) {
+            if (window.confirm('Delete this question? This cannot be undone.')) {
+                try {
+                    const response = await fetch(`/api/admin/questions/${questionId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.error) {
+                        alert('Failed to delete question: ' + result.error);
+                    } else {
+                        alert('Question deleted successfully!');
+                        await loadInitialData(); // Reload data
+                    }
+                } catch (error) {
+                    console.error('Error deleting question:', error);
+                    alert('Failed to delete question: ' + error.message);
+                }
+            }
+        }
+
+        // Export questions
+        function exportQuestions() {
+            const dataStr = JSON.stringify(questions, null, 2);
+            const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+            const exportFileDefaultName = `questions_${new Date().toISOString().split('T')[0]}.json`;
+            const linkElement = document.createElement('a');
+            linkElement.setAttribute('href', dataUri);
+            linkElement.setAttribute('download', exportFileDefaultName);
+            linkElement.click();
+        }
+
+        // Render questions
         function renderQuestions() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const filterType = document.getElementById('filterSelect').value;
+            
+            const filteredQuestions = questions.filter(q => {
+                const matchesType = filterType === 'all' || q.type === filterType;
+                const matchesSearch = searchTerm === '' ||
+                    q.question.toLowerCase().includes(searchTerm) ||
+                    q.id.toLowerCase().includes(searchTerm);
+                return matchesType && matchesSearch;
+            });
+
+            document.getElementById('questionCount').textContent = `${filteredQuestions.length} questions`;
+
             const container = document.getElementById('questionsList');
             
-            if (questions.length === 0) {
+            if (filteredQuestions.length === 0) {
                 container.innerHTML = `
-                    <div class="loading">
-                        <div style="font-size: 32px; margin: 0 auto 12px; color: #9ca3af;">❓</div>
-                        <p>No questions found</p>
+                    <div class="empty-state">
+                        <div class="empty-icon">❓</div>
+                        <p class="empty-text">No questions found</p>
                     </div>
                 `;
                 return;
             }
 
-            const html = questions.slice(0, 5).map(question => `
+            container.innerHTML = filteredQuestions.map(question => `
                 <div class="question-item">
                     <div class="question-header">
                         <div class="question-content">
-                            <div class="question-title">${question.question}</div>
-                            <div class="question-stats">
-                                <span>Type: ${question.type}</span>
-                                <span>Priority: ${question.priority}</span>
-                                <span>Options: ${question.options.length}</span>
-                                <span>ID: ${question.id}</span>
+                            <div class="question-badges">
+                                <span class="badge badge-type">${question.type}</span>
+                                <span class="badge badge-priority">Priority: ${question.priority}</span>
                             </div>
+                            <h3 class="question-title">${question.question}</h3>
                         </div>
-                        <div>
-                            <button 
-                                class="action-button" 
-                                title="Edit"
-                                onclick="editQuestion('${question.id}')"
-                            >
+                        <div class="question-actions">
+                            <button class="action-btn" onclick="toggleQuestionDetails('${question.id}')" title="Expand">
+                                <span id="expandIcon-${question.id}">▼</span>
+                            </button>
+                            <button class="action-btn" onclick="showEditForm(${JSON.stringify(question).replace(/"/g, '&quot;')})" title="Edit">
                                 ✏️
+                            </button>
+                            <button class="action-btn delete" onclick="deleteQuestion('${question.id}')" title="Delete">
+                                🗑️
                             </button>
                         </div>
                     </div>
+                    <div id="details-${question.id}" class="question-details hidden">
+                        ${question.options.map(option => `
+                            <div class="option-display">
+                                <div class="option-content">
+                                    <span class="option-emoji">${option.image || ''}</span>
+                                    <span class="option-text">${option.text}</span>
+                                </div>
+                                <div class="option-scores">
+                                    ${Object.entries(option.scores || {}).map(([key, value]) => `
+                                        <span class="score-badge">${key}: <strong>${value}</strong></span>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
             `).join('');
+        }
+
+        // Toggle question details
+        function toggleQuestionDetails(questionId) {
+            const details = document.getElementById(`details-${questionId}`);
+            const icon = document.getElementById(`expandIcon-${questionId}`);
+            
+            if (details.classList.contains('hidden')) {
+                details.classList.remove('hidden');
+                icon.textContent = '▲';
+            } else {
+                details.classList.add('hidden');
+                icon.textContent = '▼';
+            }
+        }
+
+        // Show weight editor
+        function showWeightEditor() {
+            const weights = globalStatsData?.scoringConfig?.dimension_weights || {};
+            currentAlgorithmWeights = { ...weights };
+            const grid = document.getElementById('dimensionWeightsGrid');
+            
+            grid.innerHTML = Object.entries(weights).map(([key, value]) => `
+                <div class="weight-item">
+                    <label class="weight-label">${key}:</label>
+                    <input type="number" class="weight-input" 
+                           value="${value}" 
+                           step="0.1" 
+                           min="0" 
+                           max="2"
+                           data-dimension="${key}">
+                </div>
+            `).join('');
+            
+            document.getElementById('weightEditor').classList.remove('hidden');
+        }
+
+        // Hide weight editor
+        function hideWeightEditor() {
+            document.getElementById('weightEditor').classList.add('hidden');
+            currentAlgorithmWeights = {};
+        }
+
+        // Save weights
+        async function saveWeights() {
+            const newWeights = {};
+            const inputs = document.querySelectorAll('#dimensionWeightsGrid .weight-input');
+            
+            inputs.forEach(input => {
+                const dimension = input.dataset.dimension;
+                const value = parseFloat(input.value);
+                if (!isNaN(value)) {
+                    newWeights[dimension] = value;
+                }
+            });
+
+            try {
+                const response = await fetch('/api/admin/algorithm-weights', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dimension_weights: newWeights })
+                });
+
+                const result = await response.json();
+                
+                if (result.error) {
+                    alert('Failed to save weights: ' + result.error);
+                } else {
+                    alert('Weights saved successfully!');
+                    hideWeightEditor();
+                    await loadInitialData(); // Reload data to show updated weights
+                }
+            } catch (error) {
+                console.error('Error saving weights:', error);
+                alert('Failed to save weights: ' + error.message);
+            }
+        }
+
+        // Render algorithms
+        function renderAlgorithms(statsData) {
+            const container = document.getElementById('algorithmsList');
+            let html = '';
+
+            if (statsData.scoringConfig) {
+                html += `
+                    <div class="algorithm-card">
+                        <div class="algorithm-header">
+                            <div>
+                                <h3 class="algorithm-title">${statsData.scoringConfig.algorithm_name}</h3>
+                                <p class="algorithm-description">${statsData.scoringConfig.notes || 'Scoring algorithm'}</p>
+                            </div>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <span class="version-badge">${statsData.scoringConfig.version}</span>
+                                <button class="btn btn-primary btn-small" onclick="showWeightEditor()">
+                                    ✏️ Edit Weights
+                                </button>
+                            </div>
+                        </div>
+                        <div class="config-grid">
+                            <div class="config-section">
+                                <h4 class="config-title">Dimension Weights</h4>
+                                <div class="config-content">
+                                    <div class="config-item">
+                                        ${Object.entries(statsData.scoringConfig.dimension_weights || {}).map(([key, value]) => `
+                                            <div>${key}: ${value}</div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            if (statsData.questionSelectionConfig) {
+                html += `
+                    <div class="algorithm-card">
+                        <div class="algorithm-header">
+                            <div>
+                                <h3 class="algorithm-title">${statsData.questionSelectionConfig.algorithm_name}</h3>
+                                <p class="algorithm-description">${statsData.questionSelectionConfig.notes || 'Question selection algorithm'}</p>
+                            </div>
+                            <span class="version-badge">${statsData.questionSelectionConfig.version}</span>
+                        </div>
+                        <div class="config-section">
+                            <h4 class="config-title">Selection Logic</h4>
+                            <div class="config-content">
+                                ${Object.entries(statsData.questionSelectionConfig.selection_logic || {}).map(([key, value]) => `
+                                    <div>${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}</div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
 
             container.innerHTML = html;
         }
-
-        // Edit question function
-        function editQuestion(questionId) {
-            console.log('Edit button clicked for question:', questionId);
-            currentEditingQuestion = questions.find(q => q.id === questionId);
-            
-            // Show the form
-            const form = document.getElementById('editForm');
-            form.classList.remove('hidden');
-            
-            // Update form content
-            const formTitle = form.querySelector('h3');
-            const formText = form.querySelector('p');
-            formTitle.textContent = 'Edit Question';
-            formText.textContent = `FORM IS WORKING! Editing question: ${questionId}`;
-        }
-
-        // Add question function
-        function addQuestion() {
-            console.log('Add question button clicked');
-            currentEditingQuestion = { id: 'NEW', type: '', priority: 5, question: '', options: [] };
-            
-            // Show the form
-            const form = document.getElementById('editForm');
-            form.classList.remove('hidden');
-            
-            // Update form content
-            const formTitle = form.querySelector('h3');
-            const formText = form.querySelector('p');
-            formTitle.textContent = 'Create New Question';
-            formText.textContent = 'FORM IS WORKING! Creating new question.';
-        }
-
-        // Close form function
-        function closeForm() {
-            console.log('Close form button clicked');
-            const form = document.getElementById('editForm');
-            form.classList.add('hidden');
-            currentEditingQuestion = null;
-        }
-
-        // Event listeners
-        document.getElementById('addQuestionBtn').addEventListener('click', addQuestion);
-        document.getElementById('closeFormBtn').addEventListener('click', closeForm);
-
-        // Load questions when page loads
-        document.addEventListener('DOMContentLoaded', loadQuestions);
     </script>
 </body>
 </html>
