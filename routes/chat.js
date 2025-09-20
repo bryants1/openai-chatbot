@@ -514,14 +514,17 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   if (haveAny) {
     // Use scores directly for spider diagram (already in -10 to +10 range for bipolar scoring)
     const golferScores = {};
+    console.log('[DEBUG] Raw golfer scores:', scores);
     for (const k of dims) {
       const v = scores?.[k];
       if (typeof v === "number" && isFinite(v)) {
         golferScores[k] = v; // Keep bipolar scores as-is (-10 to +10)
+        console.log(`[DEBUG] Golfer score for ${k}: ${v}`);
       } else {
         golferScores[k] = 0;
       }
     }
+    console.log('[DEBUG] Final golferScores:', golferScores);
     
     // Calculate average course scores for overlay
     const avgCourseScores = {};
