@@ -619,7 +619,14 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
     
     for (const c of uniqueCourses.slice(0, 6)) { // Reduced to 6 to fit better with spider diagrams
       const name = (c.name || c.payload?.course_name || "Course");
+      // Match score is calculated by Qdrant using normalized 0-1 vectors
+      // This represents cosine similarity in the vector space, not visual similarity in spider diagrams
       const matchScore = (typeof c.score === "number") ? Math.round(c.score * 100) : 0;
+      
+      // Debug: Show the actual similarity calculation
+      console.log(`[DEBUG] Match score for ${name}: ${c.score} (${matchScore}%)`);
+      console.log(`[DEBUG] Golfer vector: [${Object.values(golferScores).map(v => v.toFixed(2)).join(', ')}]`);
+      console.log(`[DEBUG] Course vector: [${Object.values(courseScores).map(v => v.toFixed(2)).join(', ')}]`);
       const url = c.url || c.payload?.course_url || c.payload?.website || "";
       
       // Extract course vector scores from payload
