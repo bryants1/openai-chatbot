@@ -550,12 +550,18 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
         
         // Check if any of these keys have been seen before
         const isDuplicate = keys.some(key => seen.has(key));
-        if (isDuplicate) return false;
+        if (isDuplicate) {
+          console.log(`[DEBUG] Duplicate course filtered out:`, c.name, 'keys:', keys);
+          return false;
+        }
         
         // Add all keys to seen set
         keys.forEach(key => seen.add(key));
+        console.log(`[DEBUG] Unique course added:`, c.name, 'keys:', keys);
         return true;
       });
+      
+      console.log(`[DEBUG] Total courses: ${courses.length}, Unique courses: ${uniqueCourses.length}`);
       
       for (const k of dims) {
         let sum = 0;
@@ -660,7 +666,7 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       
       const explanation = dimensionMatches.map(match => {
         const dimName = match.dimension.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        return `${dimName} (${Math.round(match.course)}/100)`;
+        return `${dimName} (${Math.round(match.course * 10) / 10})`;
       }).join(', ');
       
       // Add course spider diagram with golfer profile overlay
