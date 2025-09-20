@@ -523,9 +523,27 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       }
     }
     
+    // Calculate average course scores for overlay
+    const avgCourseScores = {};
+    if (courses.length > 0) {
+      for (const k of dims) {
+        let sum = 0;
+        let count = 0;
+        for (const c of courses.slice(0, 6)) {
+          const payload = c.payload || {};
+          const value = payload[`playing_${k}`] || payload[`experience_${k}`] || payload[k] || 0;
+          if (typeof value === "number" && isFinite(value)) {
+            sum += value;
+            count++;
+          }
+        }
+        avgCourseScores[k] = count > 0 ? sum / count : 0;
+      }
+    }
+    
     html += `<div style="margin:15px 0;padding:12px;border:1px solid #ddd;border-radius:8px;background:#f9f9f9">`;
     html += `<div style="font-size:14px;font-weight:bold;margin-bottom:8px;color:#0a7">Your Golf Profile</div>`;
-    html += generateSpiderDiagram(golferScores, "Your Profile");
+    html += generateSpiderDiagram(golferScores, "Your Profile", avgCourseScores, "Average Matched Course");
     html += `</div>`;
   }
 
@@ -556,11 +574,27 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       html += `<div style="font-weight:bold;color:#0a7;font-size:14px;margin-bottom:6px">${name}</div>`;
       html += `<div style="font-size:12px;color:#666;margin-bottom:8px">Match Score: ${matchScore}%</div>`;
       
-      // Add course spider diagram
+      // Find top 3 matching dimensions for explanation
+      const dimensionMatches = Object.keys(courseScores).map(dim => ({
+        dimension: dim,
+        golfer: scores[dim] || 0,
+        course: courseScores[dim],
+        diff: Math.abs((scores[dim] || 0) - courseScores[dim])
+      })).sort((a, b) => a.diff - b.diff).slice(0, 3);
+      
+      const explanation = dimensionMatches.map(match => {
+        const dimName = match.dimension.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        return `${dimName} (${Math.round(match.course)}/100)`;
+      }).join(', ');
+      
+      // Add course spider diagram with golfer profile overlay
       html += `<div style="margin:8px 0">`;
       html += `<div style="font-size:12px;font-weight:bold;margin-bottom:4px;color:#0a7">Course Profile</div>`;
-      html += generateSpiderDiagram(courseScores, name);
+      html += generateSpiderDiagram(courseScores, name, scores, "Your Profile");
       html += `</div>`;
+      
+      // Add key similarities explanation
+      html += `<div style="font-size:11px;color:#555;margin-bottom:4px"><strong>Key similarities:</strong> ${explanation}</div>`;
       
       if (url) {
         const safe = String(url).replace(/"/g, '%22');
@@ -1161,60 +1195,14 @@ router.post("/chat", async (req, res) => {
       }
     }
 
-    // Check for quiz request intent and suggest quiz
-    if (!isStart && !state.mode) {
+    // Handle similar courses request (works regardless of session state)
+    if (!isStart) {
       const intent = await detectIntentWithOpenAI(lastUser);
       console.log('OpenAI intent detection:', { lastUser, intent });
       
-      // Only suggest quiz for explicit quiz requests, not general course searches
-      if (intent.intent === "quiz_request" && intent.confidence > 0.7) {
-        // Check if we have location but no date - ask for date first
-        const hasLocation = state.location && (state.location.coords || state.location.city);
-        const hasDate = state.availability && state.availability.date;
-        
-        if (hasLocation && !hasDate) {
-          // We have location but no date - ask for date first
-          state.mode = "quiz";
-          state.needsWhen = true;
-          SESS.set(sid, state);
-          return res.json({
-            html: `
-              <div style="font-size:16px;margin:0 0 10px">When would you like to play?</div>
-              <div style="margin:10px 0">
-                <input type="date" id="playdate" style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-right:8px">
-                <button onclick="(function(){
-                  var date=document.getElementById('playdate').value.trim();
-                  var box=document.getElementById('box');
-                  if(box){ box.value='WHEN:'+date+'::any'; document.getElementById('btn').click(); }
-                })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">Continue</button>
-              </div>`,
-            suppressSidecar: true,
-            profile: {
-              location: state.location,
-              availability: state.availability,
-              quizProgress: "Quiz started - needs date",
-              scores: state.scores
-            }
-          });
-        }
-        
-        // Show quiz suggestion with detected location/date
-        const suggestionHTML = renderQuizSuggestionHTML(intent, state);
-        state.pendingQuizSuggestion = intent;
-        SESS.set(sid, state);
-        return res.json({ 
-          html: suggestionHTML,
-          profile: {
-            location: state.location,
-            availability: state.availability,
-            quizProgress: "Quiz suggested",
-            scores: state.scores
-          }
-        });
-      }
-
       // Handle similar courses request
       if (intent.intent === "similar_courses" && intent.confidence > 0.7) {
+        console.log('Similar courses handler reached!', { intent, lastUser });
         try {
         // Extract radius first, then course name
         const radiusMatch = lastUser.match(/(?:with|within)\s+(\d+)\s*(?:miles?|mi)/i);
@@ -1358,6 +1346,59 @@ router.post("/chat", async (req, res) => {
             html: `Sorry, I encountered an error while searching for similar courses. Please try again.`
           });
         }
+      }
+    }
+
+    // Check for quiz request intent and suggest quiz
+    if (!isStart && !state.mode) {
+      const intent = await detectIntentWithOpenAI(lastUser);
+      console.log('OpenAI intent detection:', { lastUser, intent });
+      
+      // Only suggest quiz for explicit quiz requests, not general course searches
+      if (intent.intent === "quiz_request" && intent.confidence > 0.7) {
+        // Check if we have location but no date - ask for date first
+        const hasLocation = state.location && (state.location.coords || state.location.city);
+        const hasDate = state.availability && state.availability.date;
+        
+        if (hasLocation && !hasDate) {
+          // We have location but no date - ask for date first
+          state.mode = "quiz";
+          state.needsWhen = true;
+          SESS.set(sid, state);
+          return res.json({
+            html: `
+              <div style="font-size:16px;margin:0 0 10px">When would you like to play?</div>
+              <div style="margin:10px 0">
+                <input type="date" id="playdate" style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-right:8px">
+                <button onclick="(function(){
+                  var date=document.getElementById('playdate').value.trim();
+                  var box=document.getElementById('box');
+                  if(box){ box.value='WHEN:'+date+'::any'; document.getElementById('btn').click(); }
+                })()" style="margin-left:8px;padding:8px 12px;background:#0a7;color:white;border:none;border-radius:6px;cursor:pointer">Continue</button>
+              </div>`,
+            suppressSidecar: true,
+            profile: {
+              location: state.location,
+              availability: state.availability,
+              quizProgress: "Quiz started - needs date",
+              scores: state.scores
+            }
+          });
+        }
+        
+        // Show quiz suggestion with detected location/date
+        const suggestionHTML = renderQuizSuggestionHTML(intent, state);
+        state.pendingQuizSuggestion = intent;
+        SESS.set(sid, state);
+        return res.json({ 
+          html: suggestionHTML,
+          profile: {
+            location: state.location,
+            availability: state.availability,
+            quizProgress: "Quiz suggested",
+            scores: state.scores
+          }
+        });
       }
     }
 
