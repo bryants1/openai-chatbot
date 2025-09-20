@@ -599,9 +599,6 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       return true;
     });
     
-    console.log('Original courses count:', courses.length);
-    console.log('Unique courses count:', uniqueCourses.length);
-    console.log('Course names:', uniqueCourses.map(c => c.name || c.payload?.course_name));
     
     for (const c of uniqueCourses.slice(0, 6)) { // Reduced to 6 to fit better with spider diagrams
       const name = (c.name || c.payload?.course_name || "Course");
