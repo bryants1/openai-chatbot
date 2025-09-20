@@ -620,10 +620,6 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       // This represents cosine similarity in the vector space, not visual similarity in spider diagrams
       const matchScore = (typeof c.score === "number") ? Math.round(c.score * 100) : 0;
       
-      // Debug: Show the actual similarity calculation
-      console.log(`[DEBUG] Match score for ${name}: ${c.score} (${matchScore}%)`);
-      console.log(`[DEBUG] Golfer vector: [${Object.values(golferScores).map(v => v.toFixed(2)).join(', ')}]`);
-      console.log(`[DEBUG] Course vector: [${Object.values(courseScores).map(v => v.toFixed(2)).join(', ')}]`);
       const url = c.url || c.payload?.course_url || c.payload?.website || "";
       
       // Extract course vector scores from payload
@@ -655,6 +651,11 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       }
       
       console.log(`[DEBUG] Extracted courseScores:`, courseScores);
+      
+      // Debug: Show the actual similarity calculation
+      console.log(`[DEBUG] Match score for ${name}: ${c.score} (${matchScore}%)`);
+      console.log(`[DEBUG] Golfer vector: [${Object.values(golferScores).map(v => v.toFixed(2)).join(', ')}]`);
+      console.log(`[DEBUG] Course vector: [${Object.values(courseScores).map(v => v.toFixed(2)).join(', ')}]`);
       
       html += `<div style="margin:10px 0;padding:12px;border:1px solid #e0e0e0;border-radius:8px;background:white">`;
       html += `<div style="font-weight:bold;color:#0a7;font-size:14px;margin-bottom:6px">${name}</div>`;
