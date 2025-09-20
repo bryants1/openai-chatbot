@@ -607,18 +607,26 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       
       // Extract course vector scores from payload
       const payload = c.payload || {};
+      // Debug: Check what's actually in the payload
+      console.log(`[DEBUG] Course: ${name}`);
+      console.log(`[DEBUG] Payload keys:`, Object.keys(payload).filter(k => k.includes('playing_') || k.includes('experience_')));
+      console.log(`[DEBUG] playing_overall_difficulty:`, payload.playing_overall_difficulty);
+      console.log(`[DEBUG] experience_conditions_quality:`, payload.experience_conditions_quality);
+      
       const courseScores = {
-        overall_difficulty: payload.playing_overall_difficulty || payload.overall_difficulty || 0,
-        strategic_variety: payload.playing_strategic_variety || payload.strategic_variety || 0,
-        penal_vs_playable: payload.playing_penal_vs_playable || payload.penal_vs_playable || 0,
-        physical_demands: payload.playing_physical_demands || payload.physical_demands || 0,
-        weather_adaptability: payload.playing_weather_adaptability || payload.weather_adaptability || 0,
-        conditions_quality: payload.experience_conditions_quality || payload.conditions_quality || 0,
-        facilities_amenities: payload.experience_facilities_amenities || payload.facilities_amenities || 0,
-        service_operations: payload.experience_service_operations || payload.service_operations || 0,
-        value_proposition: payload.experience_value_proposition || payload.value_proposition || 0,
-        aesthetic_appeal: payload.experience_aesthetic_appeal || payload.aesthetic_appeal || 0
+        overall_difficulty: payload.playing_overall_difficulty || 0,
+        strategic_variety: payload.playing_strategic_variety || 0,
+        penal_vs_playable: payload.playing_penal_vs_playable || 0,
+        physical_demands: payload.playing_physical_demands || 0,
+        weather_adaptability: payload.playing_weather_adaptability || 0,
+        conditions_quality: payload.experience_conditions_quality || 0,
+        facilities_amenities: payload.experience_facilities_amenities || 0,
+        service_operations: payload.experience_service_operations || 0,
+        value_proposition: payload.experience_value_proposition || 0,
+        aesthetic_appeal: payload.experience_aesthetic_appeal || 0
       };
+      
+      console.log(`[DEBUG] Extracted courseScores:`, courseScores);
       
       html += `<div style="margin:10px 0;padding:12px;border:1px solid #e0e0e0;border-radius:8px;background:white">`;
       html += `<div style="font-weight:bold;color:#0a7;font-size:14px;margin-bottom:6px">${name}</div>`;
