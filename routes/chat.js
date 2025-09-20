@@ -529,9 +529,22 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       // Deduplicate courses for average calculation
       const seen = new Set();
       const uniqueCourses = courses.filter(c => {
-        const key = c.course_id || c.name || c.payload?.course_name || c.payload?.course_number;
-        if (seen.has(key)) return false;
-        seen.add(key);
+        // Try multiple possible keys for deduplication
+        const keys = [
+          c.course_id,
+          c.name,
+          c.payload?.course_name,
+          c.payload?.course_number,
+          c.payload?.course_course_number,
+          c.payload?.course_course_name
+        ].filter(Boolean);
+        
+        // Check if any of these keys have been seen before
+        const isDuplicate = keys.some(key => seen.has(key));
+        if (isDuplicate) return false;
+        
+        // Add all keys to seen set
+        keys.forEach(key => seen.add(key));
         return true;
       });
       
@@ -567,11 +580,28 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
     // Deduplicate courses by course_id or name
     const seen = new Set();
     const uniqueCourses = courses.filter(c => {
-      const key = c.course_id || c.name || c.payload?.course_name || c.payload?.course_number;
-      if (seen.has(key)) return false;
-      seen.add(key);
+      // Try multiple possible keys for deduplication
+      const keys = [
+        c.course_id,
+        c.name,
+        c.payload?.course_name,
+        c.payload?.course_number,
+        c.payload?.course_course_number,
+        c.payload?.course_course_name
+      ].filter(Boolean);
+      
+      // Check if any of these keys have been seen before
+      const isDuplicate = keys.some(key => seen.has(key));
+      if (isDuplicate) return false;
+      
+      // Add all keys to seen set
+      keys.forEach(key => seen.add(key));
       return true;
     });
+    
+    console.log('Original courses count:', courses.length);
+    console.log('Unique courses count:', uniqueCourses.length);
+    console.log('Course names:', uniqueCourses.map(c => c.name || c.payload?.course_name));
     
     for (const c of uniqueCourses.slice(0, 6)) { // Reduced to 6 to fit better with spider diagrams
       const name = (c.name || c.payload?.course_name || "Course");

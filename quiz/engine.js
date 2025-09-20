@@ -498,10 +498,12 @@ async function buildProfileWithMatches(answers, scores, sessionId, ml, location)
       console.log(`[engine] Received ${matches?.length || 0} course matches`);
       if (Array.isArray(matches) && matches.length) {
         profile.matchedCourses = matches.map(m => ({
+          course_id: m.course_id,
           name: m.name || m.payload?.course_name || "Course",
           url: m.url || m.payload?.course_url || m.payload?.website || null,
           score: m.score,
-          distance: m.distance
+          distance: m.distance,
+          payload: m.payload // Preserve the full payload for deduplication
         }));
         console.log(`[engine] Added ${profile.matchedCourses.length} courses to profile`);
       } else {
