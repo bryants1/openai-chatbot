@@ -630,8 +630,8 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       console.log(`[DEBUG] playing_overall_difficulty:`, payload.playing_overall_difficulty);
       console.log(`[DEBUG] experience_conditions_quality:`, payload.experience_conditions_quality);
       
-      // Convert course scores from 0-100 range to 0-1 normalized range (same as Qdrant vectors)
-      const rawCourseScores = {
+      // Extract course scores - payload values are already in 0-1 normalized range
+      const courseScores = {
         overall_difficulty: payload.playing_overall_difficulty || 0,
         strategic_variety: payload.playing_strategic_variety || 0,
         penal_vs_playable: payload.playing_penal_vs_playable || 0,
@@ -643,12 +643,6 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
         value_proposition: payload.experience_value_proposition || 0,
         aesthetic_appeal: payload.experience_aesthetic_appeal || 0
       };
-      
-      // Convert 0-100 range to 0-1 range (same normalization as Qdrant search vectors)
-      const courseScores = {};
-      for (const [key, value] of Object.entries(rawCourseScores)) {
-        courseScores[key] = Math.max(0, Math.min(1, value / 100)); // Convert 0-100 to 0-1
-      }
       
       console.log(`[DEBUG] Extracted courseScores:`, courseScores);
       
