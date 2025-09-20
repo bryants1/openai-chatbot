@@ -49,16 +49,23 @@ function norm10(scores = {}) {
   const out = {};
   for (const k of DIMS10) {
     const n = Number(scores[k]);
-    out[k] = Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : 0;
+    // For bipolar scoring: preserve negative values, clamp to -10..+10 range
+    out[k] = Number.isFinite(n) ? Math.max(-10, Math.min(10, n)) : 0;
   }
   return out;
 }
 
-// 0..10 → 0..1/null vector in order
+// -10..+10 → 0..1/null vector in order (for bipolar scoring)
+// Maps negative preferences to low values, positive preferences to high values
 export function scoresTo10DVector(scores = {}) {
   return DIMS10.map((k) => {
     const n = Number(scores[k]);
-    return Number.isFinite(n) ? Math.max(0, Math.min(1, n / 10)) : null;
+    if (!Number.isFinite(n)) return null;
+    // Map -10..+10 to 0..1 range
+    // -10 (strong negative) → 0.0
+    // 0 (neutral) → 0.5  
+    // +10 (strong positive) → 1.0
+    return Math.max(0, Math.min(1, (n + 10) / 20));
   });
 }
 
