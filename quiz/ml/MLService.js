@@ -116,7 +116,9 @@ export default class MLService {
     for (const k of DIMS10) {
       const v = Number(currentScores[k] || 0);
       // buckets: 0 (uncovered) .. 3 (well covered)
-      coverage[k] = v >= 7 ? 3 : v >= 5 ? 2 : v > 0 ? 1 : 0;
+      // Use absolute value to handle negative scores in bipolar system
+      const absV = Math.abs(v);
+      coverage[k] = absV >= 7 ? 3 : absV >= 5 ? 2 : absV > 0 ? 1 : 0;
     }
 
     const scored = cands

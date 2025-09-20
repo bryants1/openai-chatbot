@@ -294,7 +294,8 @@ async function patchProfile({ userId, scores }) {
    ========================================================================= */
 function shouldFinish(scores = {}, count = 0) {
   // More comprehensive coverage check - need at least 6 dimensions covered
-  const coveredDims = DIMS10.filter(k => (scores?.[k] ?? 0) > 0).length;
+  // Use absolute value to handle negative scores in bipolar system
+  const coveredDims = DIMS10.filter(k => Math.abs(scores?.[k] ?? 0) > 0).length;
   if (count >= 10) return true;
   if (count >= 8 && coveredDims >= 6) return true;
   if (count >= 6 && coveredDims >= 8) return true;
