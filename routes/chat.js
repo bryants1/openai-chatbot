@@ -1335,18 +1335,18 @@ router.post("/chat", async (req, res) => {
           const radiusText = radius ? ` within ${radius} miles` : '';
           let html = `<div style="font-size:15px;margin:0 0 10px"><strong>Courses similar to "${targetCourse.name}"${radiusText}:</strong></div>`;
           
-          // Get target course scores for comparison (convert from 0-10 to 0-100 range for spider diagram)
+          // Get target course scores for comparison (use 0-1 normalized range same as Qdrant vectors)
           const targetScores = {
-            overall_difficulty: (targetCourse.scores?.overall_difficulty || 0) * 10,
-            strategic_variety: (targetCourse.scores?.strategic_variety || 0) * 10,
-            penal_vs_playable: (targetCourse.scores?.penal_vs_playable || 0) * 10,
-            physical_demands: (targetCourse.scores?.physical_demands || 0) * 10,
-            weather_adaptability: (targetCourse.scores?.weather_adaptability || 0) * 10,
-            conditions_quality: (targetCourse.scores?.conditions_quality || 0) * 10,
-            facilities_amenities: (targetCourse.scores?.facilities_amenities || 0) * 10,
-            service_operations: (targetCourse.scores?.service_operations || 0) * 10,
-            value_proposition: (targetCourse.scores?.value_proposition || 0) * 10,
-            aesthetic_appeal: (targetCourse.scores?.aesthetic_appeal || 0) * 10
+            overall_difficulty: targetCourse.scores?.overall_difficulty || 0,
+            strategic_variety: targetCourse.scores?.strategic_variety || 0,
+            penal_vs_playable: targetCourse.scores?.penal_vs_playable || 0,
+            physical_demands: targetCourse.scores?.physical_demands || 0,
+            weather_adaptability: targetCourse.scores?.weather_adaptability || 0,
+            conditions_quality: targetCourse.scores?.conditions_quality || 0,
+            facilities_amenities: targetCourse.scores?.facilities_amenities || 0,
+            service_operations: targetCourse.scores?.service_operations || 0,
+            value_proposition: targetCourse.scores?.value_proposition || 0,
+            aesthetic_appeal: targetCourse.scores?.aesthetic_appeal || 0
           };
           
           // Add spider diagram for target course
@@ -1361,9 +1361,9 @@ router.post("/chat", async (req, res) => {
           similarCourses.slice(0, 8).forEach((course, index) => {
             const similarity = Math.round(course.score * 100);
             
-            // Extract vector scores from course payload
+            // Extract vector scores from course payload and convert to 0-1 normalized range
             const payload = course.payload || {};
-            const vectorScores = {
+            const rawVectorScores = {
               overall_difficulty: payload.playing_overall_difficulty || payload.overall_difficulty || 0,
               strategic_variety: payload.playing_strategic_variety || payload.strategic_variety || 0,
               penal_vs_playable: payload.playing_penal_vs_playable || payload.penal_vs_playable || 0,
@@ -1376,6 +1376,12 @@ router.post("/chat", async (req, res) => {
               aesthetic_appeal: payload.experience_aesthetic_appeal || payload.aesthetic_appeal || 0
             };
             
+            // Convert 0-100 range to 0-1 range (same normalization as Qdrant vectors)
+            const vectorScores = {};
+            for (const [key, value] of Object.entries(rawVectorScores)) {
+              vectorScores[key] = Math.max(0, Math.min(1, value / 100));
+            }
+            
             // Find top 3 matching dimensions
             const dimensionMatches = Object.keys(vectorScores).map(dim => ({
               dimension: dim,
@@ -1386,7 +1392,7 @@ router.post("/chat", async (req, res) => {
             
             const explanation = dimensionMatches.map(match => {
               const dimName = match.dimension.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-              return `${dimName} (${Math.round(match.course)}/100)`;
+              return `${dimName} (${Math.round(match.course * 100) / 100})`;
             }).join(', ');
             
             html += `
@@ -1403,19 +1409,19 @@ router.post("/chat", async (req, res) => {
                 
                 <div style="font-size:10px;color:#777;margin-bottom:4px">
                   <strong>Vector scores (Target vs Course):</strong><br/>
-                  Overall Difficulty: ${Math.round(targetScores.overall_difficulty)} vs ${Math.round(vectorScores.overall_difficulty)} | 
-                  Strategic Variety: ${Math.round(targetScores.strategic_variety)} vs ${Math.round(vectorScores.strategic_variety)} | 
-                  Penal vs Playable: ${Math.round(targetScores.penal_vs_playable)} vs ${Math.round(vectorScores.penal_vs_playable)} | 
-                  Physical Demands: ${Math.round(targetScores.physical_demands)} vs ${Math.round(vectorScores.physical_demands)} | 
-                  Weather Adaptability: ${Math.round(targetScores.weather_adaptability)} vs ${Math.round(vectorScores.weather_adaptability)}
+                  Overall Difficulty: ${Math.round(targetScores.overall_difficulty * 100) / 100} vs ${Math.round(vectorScores.overall_difficulty * 100) / 100} | 
+                  Strategic Variety: ${Math.round(targetScores.strategic_variety * 100) / 100} vs ${Math.round(vectorScores.strategic_variety * 100) / 100} | 
+                  Penal vs Playable: ${Math.round(targetScores.penal_vs_playable * 100) / 100} vs ${Math.round(vectorScores.penal_vs_playable * 100) / 100} | 
+                  Physical Demands: ${Math.round(targetScores.physical_demands * 100) / 100} vs ${Math.round(vectorScores.physical_demands * 100) / 100} | 
+                  Weather Adaptability: ${Math.round(targetScores.weather_adaptability * 100) / 100} vs ${Math.round(vectorScores.weather_adaptability * 100) / 100}
                 </div>
                 <div style="font-size:10px;color:#777">
                   <strong>Experience factors (Target vs Course):</strong><br/>
-                  Conditions Quality: ${Math.round(targetScores.conditions_quality)} vs ${Math.round(vectorScores.conditions_quality)} | 
-                  Facilities: ${Math.round(targetScores.facilities_amenities)} vs ${Math.round(vectorScores.facilities_amenities)} | 
-                  Service: ${Math.round(targetScores.service_operations)} vs ${Math.round(vectorScores.service_operations)} | 
-                  Value: ${Math.round(targetScores.value_proposition)} vs ${Math.round(vectorScores.value_proposition)} | 
-                  Aesthetic: ${Math.round(targetScores.aesthetic_appeal)} vs ${Math.round(vectorScores.aesthetic_appeal)}
+                  Conditions Quality: ${Math.round(targetScores.conditions_quality * 100) / 100} vs ${Math.round(vectorScores.conditions_quality * 100) / 100} | 
+                  Facilities: ${Math.round(targetScores.facilities_amenities * 100) / 100} vs ${Math.round(vectorScores.facilities_amenities * 100) / 100} | 
+                  Service: ${Math.round(targetScores.service_operations * 100) / 100} vs ${Math.round(vectorScores.service_operations * 100) / 100} | 
+                  Value: ${Math.round(targetScores.value_proposition * 100) / 100} vs ${Math.round(vectorScores.value_proposition * 100) / 100} | 
+                  Aesthetic: ${Math.round(targetScores.aesthetic_appeal * 100) / 100} vs ${Math.round(vectorScores.aesthetic_appeal * 100) / 100}
                 </div>
                 ${course.url ? `<div style="font-size:11px;margin-top:4px"><a href="${course.url}" target="_blank" style="color:#0a7">Visit Website</a></div>` : ''}
               </div>
