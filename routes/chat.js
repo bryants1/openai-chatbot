@@ -555,9 +555,9 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
           const payload = c.payload || {};
           let value = 0;
           if (k === 'overall_difficulty' || k === 'strategic_variety' || k === 'penal_vs_playable' || k === 'physical_demands' || k === 'weather_adaptability') {
-            value = payload[`playing_${k}`] || 0;
+            value = payload[`playing_${k}`] || payload[k] || 0;
           } else {
-            value = payload[`experience_${k}`] || 0;
+            value = payload[`experience_${k}`] || payload[k] || 0;
           }
           if (typeof value === "number" && isFinite(value)) {
             sum += value;
@@ -608,16 +608,16 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       // Extract course vector scores from payload
       const payload = c.payload || {};
       const courseScores = {
-        overall_difficulty: payload.playing_overall_difficulty || 0,
-        strategic_variety: payload.playing_strategic_variety || 0,
-        penal_vs_playable: payload.playing_penal_vs_playable || 0,
-        physical_demands: payload.playing_physical_demands || 0,
-        weather_adaptability: payload.playing_weather_adaptability || 0,
-        conditions_quality: payload.experience_conditions_quality || 0,
-        facilities_amenities: payload.experience_facilities_amenities || 0,
-        service_operations: payload.experience_service_operations || 0,
-        value_proposition: payload.experience_value_proposition || 0,
-        aesthetic_appeal: payload.experience_aesthetic_appeal || 0
+        overall_difficulty: payload.playing_overall_difficulty || payload.overall_difficulty || 0,
+        strategic_variety: payload.playing_strategic_variety || payload.strategic_variety || 0,
+        penal_vs_playable: payload.playing_penal_vs_playable || payload.penal_vs_playable || 0,
+        physical_demands: payload.playing_physical_demands || payload.physical_demands || 0,
+        weather_adaptability: payload.playing_weather_adaptability || payload.weather_adaptability || 0,
+        conditions_quality: payload.experience_conditions_quality || payload.conditions_quality || 0,
+        facilities_amenities: payload.experience_facilities_amenities || payload.facilities_amenities || 0,
+        service_operations: payload.experience_service_operations || payload.service_operations || 0,
+        value_proposition: payload.experience_value_proposition || payload.value_proposition || 0,
+        aesthetic_appeal: payload.experience_aesthetic_appeal || payload.aesthetic_appeal || 0
       };
       
       html += `<div style="margin:10px 0;padding:12px;border:1px solid #e0e0e0;border-radius:8px;background:white">`;
