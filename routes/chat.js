@@ -509,24 +509,25 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   let html = `<div style="font-size:16px;font-weight:bold;margin-bottom:15px;color:#0a7">🎉 You've completed the quiz!</div>`;
   if (total) html += `<div style="font-size:14px;color:#666;margin-bottom:15px">Questions answered: ${total}</div>`;
 
+  // Convert scores to 0-1 normalized vectors (same as used for Qdrant search)
+  const golferScores = {};
+  console.log('[DEBUG] Raw golfer scores:', scores);
+  for (const k of dims) {
+    const v = scores?.[k];
+    if (typeof v === "number" && isFinite(v)) {
+      // Convert to 0-1 range using the same logic as scoresTo10DVector
+      // Map -10..+10 to 0..1 range (same as Qdrant search vectors)
+      golferScores[k] = Math.max(0, Math.min(1, (v + 10) / 20));
+      console.log(`[DEBUG] Golfer score for ${k}: ${v} -> ${golferScores[k]} (0-1 normalized)`);
+    } else {
+      golferScores[k] = 0.5; // Neutral value for missing scores
+    }
+  }
+  console.log('[DEBUG] Final golferScores (0-1 normalized):', golferScores);
+  
   // Add golfer profile spider diagram
   const haveAny = dims.some(k => typeof scores?.[k] === "number" && isFinite(scores[k]));
   if (haveAny) {
-    // Convert scores to 0-1 normalized vectors (same as used for Qdrant search)
-    const golferScores = {};
-    console.log('[DEBUG] Raw golfer scores:', scores);
-    for (const k of dims) {
-      const v = scores?.[k];
-      if (typeof v === "number" && isFinite(v)) {
-        // Convert to 0-1 range using the same logic as scoresTo10DVector
-        // Map -10..+10 to 0..1 range (same as Qdrant search vectors)
-        golferScores[k] = Math.max(0, Math.min(1, (v + 10) / 20));
-        console.log(`[DEBUG] Golfer score for ${k}: ${v} -> ${golferScores[k]} (0-1 normalized)`);
-      } else {
-        golferScores[k] = 0.5; // Neutral value for missing scores
-      }
-    }
-    console.log('[DEBUG] Final golferScores (0-1 normalized):', golferScores);
     
     // Calculate average course scores for overlay
     const avgCourseScores = {};
