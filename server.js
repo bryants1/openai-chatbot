@@ -948,10 +948,18 @@ app.get("/api/courses/similar/:courseName", async (req, res) => {
       return res.status(404).json({ error: `No courses found in database` });
     }
 
-    // Find the best match by name (case-insensitive)
-    const targetPoint = results.points.find(p => 
-      p.payload?.course_name?.toLowerCase().includes(courseName.toLowerCase())
-    );
+    // Find the best match by name (case-insensitive, more flexible matching)
+    const targetPoint = results.points.find(p => {
+      const courseNameLower = courseName.toLowerCase();
+      const payloadName = p.payload?.course_name?.toLowerCase() || '';
+      const dbName = p.payload?.db_course_name?.toLowerCase() || '';
+      
+      // Try multiple matching strategies
+      return payloadName.includes(courseNameLower) || 
+             dbName.includes(courseNameLower) ||
+             courseNameLower.includes(payloadName.split(' - ')[1] || '') ||
+             courseNameLower.includes(dbName);
+    });
 
     if (!targetPoint) {
       return res.status(404).json({ error: `Course "${courseName}" not found` });
