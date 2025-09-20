@@ -237,41 +237,98 @@
         const QuestionManager = () => {
             const [questions, setQuestions] = useState([]);
             const [loading, setLoading] = useState(true);
+            const [editingQuestion, setEditingQuestion] = useState(null);
+            const [showAddForm, setShowAddForm] = useState(false);
+            const [formData, setFormData] = useState({
+                id: '',
+                type: '',
+                priority: 5,
+                question: '',
+                options: []
+            });
 
             useEffect(() => {
-                // Mock data
-                const mockQuestions = [
-                    {
-                        id: 'Q1_DIFFICULTY_1',
-                        type: 'difficulty',
-                        priority: 10,
-                        question: 'What is your preferred course difficulty level?',
-                        uses: 45,
-                        effectiveness: 4.0
-                    },
-                    {
-                        id: 'Q2_STRATEGY_1',
-                        type: 'strategy',
-                        priority: 9,
-                        question: 'How do you prefer to approach course strategy?',
-                        uses: 38,
-                        effectiveness: 4.0
-                    },
-                    {
-                        id: 'Q3_AMENITIES_1',
-                        type: 'amenities',
-                        priority: 8,
-                        question: 'What amenities are most important to you?',
-                        uses: 32,
-                        effectiveness: 3.8
-                    }
-                ];
-
-                setTimeout(() => {
-                    setQuestions(mockQuestions);
-                    setLoading(false);
-                }, 1000);
+                fetchQuestions();
             }, []);
+
+            const fetchQuestions = async () => {
+                try {
+                    setLoading(true);
+                    const response = await fetch('/api/admin/questions');
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        console.error('Error fetching questions:', data.error);
+                        setQuestions([]);
+                    } else {
+                        setQuestions(data.questions || []);
+                    }
+                } catch (error) {
+                    console.error('Error fetching questions:', error);
+                    setQuestions([]);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleEdit = (question) => {
+                setEditingQuestion(question);
+                setFormData({
+                    id: question.id,
+                    type: question.type,
+                    priority: question.priority,
+                    question: question.question,
+                    options: question.options.map(opt => ({
+                        text: opt.text,
+                        emoji: opt.emoji,
+                        scores: opt.scores || {}
+                    }))
+                });
+                setShowAddForm(false);
+            };
+
+            const handleSave = async () => {
+                if (!formData.question || !formData.id) {
+                    alert('Please provide both a question ID and question text');
+                    return;
+                }
+
+                const validOptions = formData.options.filter(opt => opt.text);
+                if (validOptions.length < 2) {
+                    alert('Please provide at least 2 answer options');
+                    return;
+                }
+
+                try {
+                    // For now, just show a success message
+                    // In a real implementation, you'd make a POST request to update the question
+                    alert('Question saved successfully! (Note: This is a demo - actual save functionality would require additional API endpoints)');
+                    
+                    // Refresh the questions list
+                    fetchQuestions();
+                    setEditingQuestion(null);
+                    setShowAddForm(false);
+                } catch (error) {
+                    console.error('Error saving question:', error);
+                    alert('Failed to save question: ' + error.message);
+                }
+            };
+
+            const handleDelete = async (questionId) => {
+                if (window.confirm('Delete this question? This cannot be undone.')) {
+                    try {
+                        // For now, just show a success message
+                        // In a real implementation, you'd make a DELETE request
+                        alert('Question deleted successfully! (Note: This is a demo - actual delete functionality would require additional API endpoints)');
+                        
+                        // Refresh the questions list
+                        fetchQuestions();
+                    } catch (error) {
+                        console.error('Error deleting question:', error);
+                        alert('Failed to delete question: ' + error.message);
+                    }
+                }
+            };
 
             if (loading) {
                 return (
@@ -301,15 +358,28 @@
                                 }}>
                                     📥 Export
                                 </button>
-                                <button style={{
-                                    padding: '8px 16px',
-                                    backgroundColor: '#3b82f6',
-                                    border: 'none',
-                                    borderRadius: '6px',
-                                    fontSize: '14px',
-                                    color: '#ffffff',
-                                    cursor: 'pointer'
-                                }}>
+                                <button 
+                                    onClick={() => {
+                                        setShowAddForm(true);
+                                        setEditingQuestion(null);
+                                        setFormData({
+                                            id: '',
+                                            type: '',
+                                            priority: 5,
+                                            question: '',
+                                            options: [{ text: '', emoji: '', scores: {} }, { text: '', emoji: '', scores: {} }]
+                                        });
+                                    }}
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: '#3b82f6',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        fontSize: '14px',
+                                        color: '#ffffff',
+                                        cursor: 'pointer'
+                                    }}
+                                >
                                     ➕ Add Question
                                 </button>
                             </div>
@@ -333,19 +403,236 @@
                                             </div>
                                             <h3 class="question-title">{question.question}</h3>
                                             <div class="question-stats">
-                                                <span>Uses: {question.uses}</span>
-                                                <span>Effectiveness: {question.effectiveness.toFixed(2)}</span>
+                                                <span>Options: {question.options.length}</span>
+                                                <span>ID: {question.id}</span>
                                             </div>
+                                            {question.options.length > 0 && (
+                                                <div style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280' }}>
+                                                    <strong>Options:</strong>
+                                                    {question.options.map((opt, idx) => (
+                                                        <span key={idx} style={{ marginLeft: '8px' }}>
+                                                            {opt.emoji} {opt.text}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
                                         <div class="question-actions">
-                                            <button class="action-button" title="Edit">✏️</button>
-                                            <button class="action-button delete" title="Delete">🗑️</button>
+                                            <button 
+                                                class="action-button" 
+                                                title="Edit"
+                                                onClick={() => handleEdit(question)}
+                                            >
+                                                ✏️
+                                            </button>
+                                            <button 
+                                                class="action-button delete" 
+                                                title="Delete"
+                                                onClick={() => handleDelete(question.id)}
+                                            >
+                                                🗑️
+                                            </button>
                                         </div>
                                     </div>
                                 </div>
                             ))
                         )}
                     </div>
+
+                    {/* Edit/Add Form */}
+                    {(editingQuestion || showAddForm) && (
+                        <div style={{ 
+                            backgroundColor: '#ffffff', 
+                            border: '2px solid #3b82f6', 
+                            borderRadius: '8px', 
+                            padding: '24px', 
+                            marginBottom: '24px' 
+                        }}>
+                            <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px' }}>
+                                {editingQuestion ? 'Edit Question' : 'Create New Question'}
+                            </h3>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '4px' }}>ID</label>
+                                    <input
+                                        type="text"
+                                        value={formData.id}
+                                        onChange={(e) => setFormData({...formData, id: e.target.value})}
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            border: '1px solid #d1d5db',
+                                            borderRadius: '4px',
+                                            fontSize: '14px'
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '4px' }}>Type</label>
+                                    <input
+                                        type="text"
+                                        value={formData.type}
+                                        onChange={(e) => setFormData({...formData, type: e.target.value})}
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            border: '1px solid #d1d5db',
+                                            borderRadius: '4px',
+                                            fontSize: '14px'
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '4px' }}>Priority (1-10)</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="10"
+                                        value={formData.priority || ''}
+                                        onChange={(e) => setFormData({...formData, priority: parseInt(e.target.value)})}
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            border: '1px solid #d1d5db',
+                                            borderRadius: '4px',
+                                            fontSize: '14px'
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '4px' }}>Question</label>
+                                    <input
+                                        type="text"
+                                        value={formData.question}
+                                        onChange={(e) => setFormData({...formData, question: e.target.value})}
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            border: '1px solid #d1d5db',
+                                            borderRadius: '4px',
+                                            fontSize: '14px'
+                                        }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div style={{ marginBottom: '20px' }}>
+                                <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Answer Options</h4>
+                                {formData.options.map((option, idx) => (
+                                    <div key={idx} style={{ 
+                                        backgroundColor: '#f9fafb', 
+                                        padding: '16px', 
+                                        borderRadius: '6px', 
+                                        marginBottom: '12px' 
+                                    }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: '12px', marginBottom: '12px' }}>
+                                            <input
+                                                type="text"
+                                                value={option.text}
+                                                onChange={(e) => {
+                                                    const newOptions = [...formData.options];
+                                                    newOptions[idx].text = e.target.value;
+                                                    setFormData({ ...formData, options: newOptions });
+                                                }}
+                                                placeholder="Answer text"
+                                                style={{
+                                                    padding: '6px 10px',
+                                                    border: '1px solid #d1d5db',
+                                                    borderRadius: '4px',
+                                                    fontSize: '13px'
+                                                }}
+                                            />
+                                            <input
+                                                type="text"
+                                                value={option.emoji}
+                                                onChange={(e) => {
+                                                    const newOptions = [...formData.options];
+                                                    newOptions[idx].emoji = e.target.value;
+                                                    setFormData({ ...formData, options: newOptions });
+                                                }}
+                                                placeholder="Emoji"
+                                                style={{
+                                                    padding: '6px 10px',
+                                                    border: '1px solid #d1d5db',
+                                                    borderRadius: '4px',
+                                                    fontSize: '13px'
+                                                }}
+                                            />
+                                            <button
+                                                onClick={() => {
+                                                    const newOptions = formData.options.filter((_, i) => i !== idx);
+                                                    setFormData({ ...formData, options: newOptions });
+                                                }}
+                                                style={{
+                                                    padding: '6px 12px',
+                                                    backgroundColor: '#fee2e2',
+                                                    color: '#dc2626',
+                                                    border: 'none',
+                                                    borderRadius: '4px',
+                                                    fontSize: '12px',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                Remove
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                                
+                                <button
+                                    onClick={() => {
+                                        const newOptions = [...formData.options, { text: '', emoji: '', scores: {} }];
+                                        setFormData({ ...formData, options: newOptions });
+                                    }}
+                                    style={{
+                                        padding: '8px 12px',
+                                        backgroundColor: '#f3f4f6',
+                                        border: '1px dashed #9ca3af',
+                                        borderRadius: '4px',
+                                        fontSize: '13px',
+                                        cursor: 'pointer',
+                                        width: '100%'
+                                    }}
+                                >
+                                    + Add Option
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                                <button
+                                    onClick={() => {
+                                        setEditingQuestion(null);
+                                        setShowAddForm(false);
+                                    }}
+                                    style={{
+                                        padding: '8px 20px',
+                                        backgroundColor: '#ffffff',
+                                        border: '1px solid #d1d5db',
+                                        borderRadius: '6px',
+                                        fontSize: '14px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleSave}
+                                    style={{
+                                        padding: '8px 20px',
+                                        backgroundColor: '#3b82f6',
+                                        color: '#ffffff',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        fontSize: '14px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Save
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         };
@@ -353,13 +640,46 @@
         const MLAdminInterface = () => {
             const [activeTab, setActiveTab] = useState('questions');
             const [loading, setLoading] = useState(true);
+            const [stats, setStats] = useState({
+                totalProfiles: 0,
+                activeAlgorithms: 0,
+                scoringConfig: null,
+                questionSelectionConfig: null
+            });
 
             useEffect(() => {
-                // Simulate loading
-                setTimeout(() => {
-                    setLoading(false);
-                }, 500);
+                fetchStats();
             }, []);
+
+            const fetchStats = async () => {
+                try {
+                    setLoading(true);
+                    const response = await fetch('/api/admin/stats');
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        console.error('Error fetching stats:', data.error);
+                        setStats({
+                            totalProfiles: 0,
+                            activeAlgorithms: 0,
+                            scoringConfig: null,
+                            questionSelectionConfig: null
+                        });
+                    } else {
+                        setStats(data);
+                    }
+                } catch (error) {
+                    console.error('Error fetching stats:', error);
+                    setStats({
+                        totalProfiles: 0,
+                        activeAlgorithms: 0,
+                        scoringConfig: null,
+                        questionSelectionConfig: null
+                    });
+                } finally {
+                    setLoading(false);
+                }
+            };
 
             if (loading) {
                 return (
@@ -408,62 +728,114 @@
                                 <div class="stats-grid">
                                     <div class="stat-card">
                                         <p class="stat-label">Total Profiles</p>
-                                        <p class="stat-value">127</p>
+                                        <p class="stat-value">{stats.totalProfiles}</p>
                                     </div>
                                     <div class="stat-card">
                                         <p class="stat-label">Active Algorithms</p>
-                                        <p class="stat-value">2</p>
+                                        <p class="stat-value">{stats.activeAlgorithms}</p>
                                     </div>
                                 </div>
 
                                 <h2 style={{ fontSize: '20px', fontWeight: '600', marginBottom: '16px' }}>Active Algorithms</h2>
                                 
-                                <div class="card">
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '20px' }}>
-                                        <div>
-                                            <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#111827' }}>Weighted Scoring v2.1</h3>
-                                            <p style={{ fontSize: '14px', color: '#6b7280', marginTop: '4px' }}>Advanced scoring algorithm with dimension weighting</p>
+                                {stats.scoringConfig && (
+                                    <div class="card">
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '20px' }}>
+                                            <div>
+                                                <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#111827' }}>
+                                                    {stats.scoringConfig.algorithm_name || 'Scoring Algorithm'}
+                                                </h3>
+                                                <p style={{ fontSize: '14px', color: '#6b7280', marginTop: '4px' }}>
+                                                    {stats.scoringConfig.notes || 'Scoring algorithm configuration'}
+                                                </p>
+                                            </div>
+                                            <span style={{
+                                                padding: '4px 12px',
+                                                backgroundColor: '#dcfce7',
+                                                color: '#166534',
+                                                borderRadius: '20px',
+                                                fontSize: '12px',
+                                                fontWeight: '500'
+                                            }}>
+                                                {stats.scoringConfig.version || 'v1.0'}
+                                            </span>
                                         </div>
-                                        <span style={{
-                                            padding: '4px 12px',
-                                            backgroundColor: '#dcfce7',
-                                            color: '#166534',
-                                            borderRadius: '20px',
-                                            fontSize: '12px',
-                                            fontWeight: '500'
-                                        }}>
-                                            v2.1
-                                        </span>
-                                    </div>
-                                    
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                                        <div>
-                                            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '12px' }}>Dimension Weights</h4>
-                                            <div style={{ backgroundColor: '#f9fafb', padding: '12px', borderRadius: '6px', fontSize: '13px', fontFamily: 'monospace' }}>
-                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                                                    <div>overall_difficulty: 0.25</div>
-                                                    <div>strategic_variety: 0.20</div>
-                                                    <div>penal_vs_playable: 0.15</div>
-                                                    <div>physical_demands: 0.15</div>
-                                                    <div>weather_adaptability: 0.10</div>
-                                                    <div>conditions_quality: 0.15</div>
+                                        
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                                            <div>
+                                                <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '12px' }}>Dimension Weights</h4>
+                                                <div style={{ backgroundColor: '#f9fafb', padding: '12px', borderRadius: '6px', fontSize: '13px', fontFamily: 'monospace' }}>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                                        {stats.scoringConfig.dimension_weights ? 
+                                                            Object.entries(stats.scoringConfig.dimension_weights).map(([key, value]) => (
+                                                                <div key={key}>{key}: {value}</div>
+                                                            )) :
+                                                            <div>No dimension weights configured</div>
+                                                        }
+                                                    </div>
                                                 </div>
                                             </div>
+                                            
+                                            <div>
+                                                <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '12px' }}>Question Type Weights</h4>
+                                                <div style={{ backgroundColor: '#f9fafb', padding: '12px', borderRadius: '6px', fontSize: '13px', fontFamily: 'monospace' }}>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                                        {stats.scoringConfig.question_type_weights ? 
+                                                            Object.entries(stats.scoringConfig.question_type_weights).map(([key, value]) => (
+                                                                <div key={key}>{key}: {value}</div>
+                                                            )) :
+                                                            <div>No question type weights configured</div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {stats.questionSelectionConfig && (
+                                    <div class="card">
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '20px' }}>
+                                            <div>
+                                                <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#111827' }}>
+                                                    {stats.questionSelectionConfig.algorithm_name || 'Question Selection Algorithm'}
+                                                </h3>
+                                                <p style={{ fontSize: '14px', color: '#6b7280', marginTop: '4px' }}>
+                                                    {stats.questionSelectionConfig.notes || 'Question selection algorithm configuration'}
+                                                </p>
+                                            </div>
+                                            <span style={{
+                                                padding: '4px 12px',
+                                                backgroundColor: '#dcfce7',
+                                                color: '#166534',
+                                                borderRadius: '20px',
+                                                fontSize: '12px',
+                                                fontWeight: '500'
+                                            }}>
+                                                {stats.questionSelectionConfig.version || 'v1.0'}
+                                            </span>
                                         </div>
                                         
                                         <div>
-                                            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '12px' }}>Question Type Weights</h4>
+                                            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '12px' }}>Selection Logic</h4>
                                             <div style={{ backgroundColor: '#f9fafb', padding: '12px', borderRadius: '6px', fontSize: '13px', fontFamily: 'monospace' }}>
-                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                                                    <div>difficulty: 1.0</div>
-                                                    <div>strategy: 0.9</div>
-                                                    <div>amenities: 0.8</div>
-                                                    <div>conditions: 0.7</div>
-                                                </div>
+                                                {stats.questionSelectionConfig.selection_logic ? 
+                                                    Object.entries(stats.questionSelectionConfig.selection_logic).map(([key, value]) => (
+                                                        <div key={key}>{key}: {typeof value === 'object' ? JSON.stringify(value) : value}</div>
+                                                    )) :
+                                                    <div>No selection logic configured</div>
+                                                }
                                             </div>
                                         </div>
                                     </div>
-                                </div>
+                                )}
+
+                                {!stats.scoringConfig && !stats.questionSelectionConfig && (
+                                    <div class="card" style={{ textAlign: 'center', padding: '48px' }}>
+                                        <div style={{ fontSize: '32px', margin: '0 auto 12px', color: '#9ca3af' }}>⚙️</div>
+                                        <p style={{ color: '#6b7280' }}>No active algorithms configured</p>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

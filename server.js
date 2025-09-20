@@ -532,6 +532,91 @@ app.get("/admin-simple", (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-simple.html'));
 });
 
+// Admin API endpoints
+app.get("/api/admin/questions", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    const { data: questionsData, error: questionsError } = await supabase
+      .from('questions')
+      .select(`
+        id,
+        question_id,
+        type,
+        priority,
+        question_text,
+        question_options (
+          option_text,
+          option_emoji,
+          option_index,
+          scores
+        )
+      `)
+      .order('priority', { ascending: false });
+
+    if (questionsError) throw questionsError;
+
+    const formattedQuestions = questionsData.map(q => ({
+      id: q.question_id,
+      dbId: q.id,
+      type: q.type,
+      priority: q.priority,
+      question: q.question_text,
+      options: q.question_options
+        .sort((a, b) => a.option_index - b.option_index)
+        .map(opt => ({
+          text: opt.option_text,
+          emoji: opt.option_emoji,
+          index: opt.option_index,
+          scores: opt.scores || {}
+        }))
+    }));
+
+    res.json({ questions: formattedQuestions });
+  } catch (error) {
+    console.error('Error fetching questions:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/admin/stats", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    // Get total profiles count
+    const { count: totalProfiles } = await supabase
+      .from('user_profiles')
+      .select('*', { count: 'exact', head: true });
+
+    // Get active algorithms count
+    const { data: scoringAlg } = await supabase
+      .from('scoring_algorithms')
+      .select('*')
+      .eq('is_active', true)
+      .single();
+
+    const { data: questionAlg } = await supabase
+      .from('question_selection_algorithms')
+      .select('*')
+      .eq('is_active', true)
+      .single();
+
+    res.json({
+      totalProfiles: totalProfiles || 0,
+      activeAlgorithms: (scoringAlg ? 1 : 0) + (questionAlg ? 1 : 0),
+      scoringConfig: scoringAlg,
+      questionSelectionConfig: questionAlg
+    });
+  } catch (error) {
+    console.error('Error fetching stats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Mount chat routes
 app.use("/api", chatRouter);
 
