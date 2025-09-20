@@ -512,25 +512,21 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   // Add golfer profile spider diagram
   const haveAny = dims.some(k => typeof scores?.[k] === "number" && isFinite(scores[k]));
   if (haveAny) {
-    // Convert scores to -10 to +10 range for spider diagram
+    // Convert scores to 0-1 normalized vectors (same as used for Qdrant search)
     const golferScores = {};
     console.log('[DEBUG] Raw golfer scores:', scores);
     for (const k of dims) {
       const v = scores?.[k];
       if (typeof v === "number" && isFinite(v)) {
-        // Convert to -10 to +10 range (assuming input is 0-100 or similar)
-        // If score is > 10, assume it's in 0-100 range and convert to -10 to +10
-        if (Math.abs(v) > 10) {
-          golferScores[k] = (v - 50) / 5; // Convert 0-100 to -10 to +10
-        } else {
-          golferScores[k] = v; // Already in -10 to +10 range
-        }
-        console.log(`[DEBUG] Golfer score for ${k}: ${v} -> ${golferScores[k]}`);
+        // Convert to 0-1 range using the same logic as scoresTo10DVector
+        // Map -10..+10 to 0..1 range (same as Qdrant search vectors)
+        golferScores[k] = Math.max(0, Math.min(1, (v + 10) / 20));
+        console.log(`[DEBUG] Golfer score for ${k}: ${v} -> ${golferScores[k]} (0-1 normalized)`);
       } else {
-        golferScores[k] = 0;
+        golferScores[k] = 0.5; // Neutral value for missing scores
       }
     }
-    console.log('[DEBUG] Final golferScores:', golferScores);
+    console.log('[DEBUG] Final golferScores (0-1 normalized):', golferScores);
     
     // Calculate average course scores for overlay
     const avgCourseScores = {};
@@ -575,8 +571,8 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
             value = payload[`experience_${k}`] || payload[k] || 0;
           }
           if (typeof value === "number" && isFinite(value)) {
-            // Convert 0-100 range to -10 to +10 range for consistency
-            const convertedValue = (value - 50) / 5;
+            // Convert 0-100 range to 0-1 range for consistency with Qdrant vectors
+            const convertedValue = Math.max(0, Math.min(1, value / 100));
             sum += convertedValue;
             count++;
           }
@@ -637,7 +633,7 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       console.log(`[DEBUG] playing_overall_difficulty:`, payload.playing_overall_difficulty);
       console.log(`[DEBUG] experience_conditions_quality:`, payload.experience_conditions_quality);
       
-      // Convert course scores from 0-100 range to -10 to +10 range to match golfer scores
+      // Convert course scores from 0-100 range to 0-1 normalized range (same as Qdrant vectors)
       const rawCourseScores = {
         overall_difficulty: payload.playing_overall_difficulty || 0,
         strategic_variety: payload.playing_strategic_variety || 0,
@@ -651,10 +647,10 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
         aesthetic_appeal: payload.experience_aesthetic_appeal || 0
       };
       
-      // Convert 0-100 range to -10 to +10 range for spider diagram consistency
+      // Convert 0-100 range to 0-1 range (same normalization as Qdrant search vectors)
       const courseScores = {};
       for (const [key, value] of Object.entries(rawCourseScores)) {
-        courseScores[key] = (value - 50) / 5; // Convert 0-100 to -10 to +10
+        courseScores[key] = Math.max(0, Math.min(1, value / 100)); // Convert 0-100 to 0-1
       }
       
       console.log(`[DEBUG] Extracted courseScores:`, courseScores);
@@ -666,20 +662,20 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
       // Find top 3 matching dimensions for explanation
       const dimensionMatches = Object.keys(courseScores).map(dim => ({
         dimension: dim,
-        golfer: scores[dim] || 0,
+        golfer: golferScores[dim] || 0,
         course: courseScores[dim],
-        diff: Math.abs((scores[dim] || 0) - courseScores[dim])
+        diff: Math.abs((golferScores[dim] || 0) - courseScores[dim])
       })).sort((a, b) => a.diff - b.diff).slice(0, 3);
       
       const explanation = dimensionMatches.map(match => {
         const dimName = match.dimension.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        return `${dimName} (${Math.round(match.course * 10) / 10})`;
+        return `${dimName} (${Math.round(match.course * 100) / 100})`;
       }).join(', ');
       
       // Add course spider diagram with golfer profile overlay
       html += `<div style="margin:8px 0">`;
       html += `<div style="font-size:12px;font-weight:bold;margin-bottom:4px;color:#0a7">Course Profile</div>`;
-      html += generateSpiderDiagram(courseScores, name, scores, "Your Profile");
+      html += generateSpiderDiagram(courseScores, name, golferScores, "Your Profile");
       html += `</div>`;
       
       // Add key similarities explanation
