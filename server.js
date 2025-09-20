@@ -522,6 +522,16 @@ app.get("/admin", (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
+// Admin test route
+app.get("/admin-test", (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-test.html'));
+});
+
+// Admin simple route
+app.get("/admin-simple", (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-simple.html'));
+});
+
 // Mount chat routes
 app.use("/api", chatRouter);
 
