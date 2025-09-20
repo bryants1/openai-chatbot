@@ -526,10 +526,19 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
     // Calculate average course scores for overlay
     const avgCourseScores = {};
     if (courses.length > 0) {
+      // Deduplicate courses for average calculation
+      const seen = new Set();
+      const uniqueCourses = courses.filter(c => {
+        const key = c.course_id || c.name || c.payload?.course_name || c.payload?.course_number;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      
       for (const k of dims) {
         let sum = 0;
         let count = 0;
-        for (const c of courses.slice(0, 6)) {
+        for (const c of uniqueCourses.slice(0, 6)) {
           const payload = c.payload || {};
           let value = 0;
           if (k === 'overall_difficulty' || k === 'strategic_variety' || k === 'penal_vs_playable' || k === 'physical_demands' || k === 'weather_adaptability') {
@@ -555,7 +564,16 @@ function renderFinalProfileHTML(profile = {}, scores = {}, total = 0) {
   if (courses.length) {
     html += `<div style="font-size:15px;font-weight:bold;margin:15px 0 10px;color:#333">Matched Courses</div>`;
     
-    for (const c of courses.slice(0, 6)) { // Reduced to 6 to fit better with spider diagrams
+    // Deduplicate courses by course_id or name
+    const seen = new Set();
+    const uniqueCourses = courses.filter(c => {
+      const key = c.course_id || c.name || c.payload?.course_name || c.payload?.course_number;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    
+    for (const c of uniqueCourses.slice(0, 6)) { // Reduced to 6 to fit better with spider diagrams
       const name = (c.name || c.payload?.course_name || "Course");
       const matchScore = (typeof c.score === "number") ? Math.round(c.score * 100) : 0;
       const url = c.url || c.payload?.course_url || c.payload?.website || "";
